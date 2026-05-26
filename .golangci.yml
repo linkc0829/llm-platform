@@ -1,0 +1,127 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - depguard       # Enforces architectural import rules
+    - gosec
+    - misspell
+    - revive
+    - bodyclose
+    - errorlint
+    - nilerr
+    - rowserrcheck
+    - sqlclosecheck
+
+linters-settings:
+  errorlint:
+    errorf: true
+
+  depguard:
+    rules:
+      # ------------------------------------------------------------------
+      # Domain layer: zero dependencies on infrastructure
+      # Glob applies to every feature's domain.go automatically.
+      # ------------------------------------------------------------------
+      domain:
+        files:
+          - "**/internal/*/domain.go"
+        deny:
+          - pkg: "github.com/jackc/pgx"
+            desc: "Domain must not depend on database drivers"
+          - pkg: "github.com/redis/go-redis"
+            desc: "Domain must not depend on cache clients"
+          - pkg: "github.com/gin-gonic/gin"
+            desc: "Domain must not depend on web frameworks"
+          - pkg: "github.com/golang-jwt/jwt"
+            desc: "Domain must not depend on auth libraries"
+          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform"
+            desc: "Domain must not depend on platform code"
+
+      # ------------------------------------------------------------------
+      # Service layer: only depends on its own ports.go (interfaces)
+      # ------------------------------------------------------------------
+      service:
+        files:
+          - "**/internal/*/service.go"
+        deny:
+          - pkg: "github.com/jackc/pgx"
+            desc: "Service must depend on ports, not concrete adapters"
+          - pkg: "github.com/redis/go-redis"
+            desc: "Service must depend on ports, not concrete adapters"
+          - pkg: "github.com/gin-gonic/gin"
+            desc: "Service must not depend on web frameworks"
+
+      # ------------------------------------------------------------------
+      # Handler layer: no direct adapter access
+      # ------------------------------------------------------------------
+      handler:
+        files:
+          - "**/internal/*/handler_*.go"
+          - "!**/internal/*/handler_*_test.go"
+        deny:
+          - pkg: "github.com/jackc/pgx"
+            desc: "Handler must call service, not adapters directly"
+          - pkg: "github.com/redis/go-redis"
+            desc: "Handler must call service, not adapters directly"
+
+      # ------------------------------------------------------------------
+      # Cross-feature isolation: features must not import each other.
+      # One explicit rule per feature — when you add a new feature, add a
+      # matching block here (the new-feature scaffolder reminds you). A
+      # glob-based rule was tried and rejected because it mis-blocks
+      # internal/<feature>/mocks subpackages from being imported by tests.
+      # ------------------------------------------------------------------
+      no-cross-feature-order:
+        files:
+          - "**/internal/order/**"
+        deny:
+          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/payment"
+            desc: "Cross-feature import forbidden. Define a port in order/ports.go and inject in bootstrap."
+          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/user"
+            desc: "Cross-feature import forbidden. Define a port in order/ports.go and inject in bootstrap."
+
+      no-cross-feature-payment:
+        files:
+          - "**/internal/payment/**"
+        deny:
+          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/order"
+            desc: "Cross-feature import forbidden."
+          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/user"
+            desc: "Cross-feature import forbidden."
+
+      no-cross-feature-user:
+        files:
+          - "**/internal/user/**"
+        deny:
+          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/order"
+            desc: "Cross-feature import forbidden."
+          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/payment"
+            desc: "Cross-feature import forbidden."
+
+      # ------------------------------------------------------------------
+      # Shared kernel: zero dependencies (only stdlib + minimal helpers)
+      # ------------------------------------------------------------------
+      shared:
+        files:
+          - "**/internal/shared/**"
+        deny:
+          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform"
+            desc: "Shared kernel must not depend on platform"
+          - pkg: "github.com/jackc/pgx"
+          - pkg: "github.com/redis/go-redis"
+          - pkg: "github.com/gin-gonic/gin"
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck

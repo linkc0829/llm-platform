@@ -1,0 +1,298 @@
+openapi: 3.1.0
+info:
+  title: go-backend-template API
+  version: 0.1.0
+  description: |
+    Hexagonal-architecture Go backend template. Endpoints follow REST conventions
+    and require Bearer JWT auth except for /auth/register and /auth/login.
+
+servers:
+  - url: http://localhost:8080
+    description: Local dev
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: auth
+  - name: users
+  - name: orders
+  - name: payments
+
+paths:
+  /healthz:
+    get:
+      tags: [system]
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: OK
+
+  /api/v1/auth/register:
+    post:
+      tags: [auth]
+      summary: Register a new user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Log in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/users/me:
+    get:
+      tags: [users]
+      summary: Get current user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/orders:
+    post:
+      tags: [orders]
+      summary: Create an order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateOrderRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderResponse" }
+    get:
+      tags: [orders]
+      summary: List the caller's orders
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaginatedOrders" }
+
+  /api/v1/orders/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IDPath"
+    get:
+      tags: [orders]
+      summary: Get one order
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/orders/{id}/pay:
+    parameters:
+      - $ref: "#/components/parameters/IDPath"
+    post:
+      tags: [orders]
+      summary: Charge payment for the order
+      responses:
+        "200":
+          description: Paid
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderResponse" }
+        "402": { $ref: "#/components/responses/PaymentRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/orders/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/IDPath"
+    post:
+      tags: [orders]
+      summary: Cancel a pending order
+      responses:
+        "200":
+          description: Canceled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/payments/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IDPath"
+    get:
+      tags: [payments]
+      summary: Get a payment
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/payments/by-order/{order_id}:
+    parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [payments]
+      summary: Get latest payment for an order
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IDPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    BadRequest:
+      description: Bad Request
+      content:
+        application/json: { schema: { $ref: "#/components/schemas/Error" } }
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json: { schema: { $ref: "#/components/schemas/Error" } }
+    Conflict:
+      description: Conflict
+      content:
+        application/json: { schema: { $ref: "#/components/schemas/Error" } }
+    NotFound:
+      description: Not Found
+      content:
+        application/json: { schema: { $ref: "#/components/schemas/Error" } }
+    PaymentRequired:
+      description: Payment Required
+      content:
+        application/json: { schema: { $ref: "#/components/schemas/Error" } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+
+    RegisterRequest:
+      type: object
+      required: [email, password, display_name]
+      properties:
+        email:        { type: string, format: email }
+        password:     { type: string, minLength: 8, maxLength: 72 }
+        display_name: { type: string, minLength: 1, maxLength: 64 }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:    { type: string, format: email }
+        password: { type: string }
+
+    UserResponse:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        email:        { type: string }
+        display_name: { type: string }
+        created_at:   { type: string, format: date-time }
+
+    AuthResponse:
+      type: object
+      properties:
+        user:  { $ref: "#/components/schemas/UserResponse" }
+        token: { type: string }
+
+    CreateOrderRequest:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:   { type: integer, minimum: 1, description: "Smallest currency unit (cents, satoshi)" }
+        currency: { type: string, example: "USD" }
+
+    OrderResponse:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        user_id:    { type: string, format: uuid }
+        amount:     { type: integer }
+        currency:   { type: string }
+        status:     { type: string, enum: [pending, paid, canceled] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PaginatedOrders:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OrderResponse" }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    PaymentResponse:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        user_id:    { type: string, format: uuid }
+        order_id:   { type: string, format: uuid }
+        amount:     { type: integer }
+        currency:   { type: string }
+        status:     { type: string, enum: [pending, succeeded, failed] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }

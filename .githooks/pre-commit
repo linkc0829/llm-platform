@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Pre-commit hook for go-backend-template.
+#
+# Install with: make hooks-install
+# Skip once with: git commit --no-verify
+#
+# Order matters:
+#   1. gofmt — catches formatting before slower checks
+#   2. sqlc generate — guarantees generated code matches sql/queries
+#   3. golangci-lint — depguard + static checks (enforces R1.* architecture)
+#   4. go test -short — unit tests only; integration tests run in CI
+#
+# Each step short-circuits on failure with a clear message.
+
+set -euo pipefail
+
+fail() {
+    echo "pre-commit: $1" >&2
+    echo "pre-commit: skip with 'git commit --no-verify' if you must" >&2
+    exit 1
+}
+
+# 1. gofmt
+# `grep -v` exits 1 when nothing matches, which under `set -e` would abort
+# the script. The trailing `|| true` neutralizes that — we want the variable
+# to end up empty when everything is formatted, not for the hook to bail.
+unformatted=$(gofmt -l . 2>/dev/null | grep -v '^vendor/' || true)
+if [ -n "$unformatted" ]; then
+    echo "pre-commit: the following files need gofmt:"
+    echo "$unformatted"
+    fail "run 'make fmt' and re-stage"
+fi
+
+# 2. sqlc — only if the user changed sql/queries or sqlc.yaml
+if git diff --cached --name-only | grep -qE '^(sql/queries/|sqlc\.yaml$)'; then
+    command -v sqlc >/dev/null || fail "sqlc not installed (https://docs.sqlc.dev/)"
+    sqlc generate || fail "sqlc generate failed"
+    # If generation produced changes, require them to be staged.
+    if ! git diff --quiet -- internal/platform/postgres/sqlc/; then
+        fail "sqlc generated new code — stage internal/platform/postgres/sqlc/ and re-commit"
+    fi
+fi
+
+# 3. lint
+command -v golangci-lint >/dev/null || fail "golangci-lint not installed"
+golangci-lint run ./... || fail "lint failed"
+
+# 4. unit tests
+go test -race -short -count=1 ./... || fail "unit tests failed"
+
+echo "pre-commit: ok"
