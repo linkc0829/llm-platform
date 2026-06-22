@@ -57,6 +57,36 @@ func tokenize(text string) []string {
 	return out
 }
 
+type Citation struct {
+	file   string
+	anchor string
+}
+
+func NewCitation(file, anchor string) Citation {
+	return Citation{file: file, anchor: anchor}
+}
+
+func (c Citation) String() string { return c.file + "#" + c.anchor }
+
+type Answer struct {
+	text     string
+	sources  []Citation
+	strategy string
+}
+
+func NewAnswer(text string, sources []Citation, strategy string) Answer {
+	return Answer{text: text, sources: sources, strategy: strategy}
+}
+
+func (a Answer) Text() string        { return a.text }
+func (a Answer) Sources() []Citation { return a.sources }
+func (a Answer) Strategy() string    { return a.strategy }
+
+type Turn struct {
+	Query  string
+	Answer string
+}
+
 type Corpus struct {
 	DocTokens [][]string
 	DocFreq   map[string]int

@@ -29,7 +29,8 @@ func main() {
 	defer stop()
 
 	repo := kb.NewMarkdownRepo("docs", ".kb")
-	svc := kb.NewService(repo)
+	llm := kb.NewOpenAIClient(cfg.OpenAI.APIKey)
+	svc := kb.NewService(repo, llm)
 	if err := svc.LoadOnStartup(ctx); err != nil {
 		if errors.Is(err, kb.ErrNotIndexed) {
 			lg.Warn("knowledge base not indexed yet; POST /index to build it")

@@ -8,3 +8,7 @@ type SectionStore interface {
 	Load(ctx context.Context) ([]Section, error)
 	Save(ctx context.Context, sections []Section) error
 }
+
+type LLM interface {
+	Answer(ctx context.Context, query string, sections []Section, history []Turn) (string, error)
+}

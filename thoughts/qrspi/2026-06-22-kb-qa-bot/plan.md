@@ -650,10 +650,10 @@ Gift cards, digital downloads, and final-sale items cannot be refunded.
 - [x] `make lint` passes.
 
 #### Manual
-- [ ] `POST /index` → `200 {"files_indexed":3,"sections_indexed":N}`.
-- [ ] `.kb/index.json` exists, is valid JSON, and lists every section with `file`,
+- [x] `POST /index` → `200 {"files_indexed":3,"sections_indexed":N}`.
+- [x] `.kb/index.json` exists, is valid JSON, and lists every section with `file`,
       `heading`, `anchor`, `body` plus corpus stats.
-- [ ] Restart `cmd/kb` without re-indexing → startup log shows the index loaded (no
+- [x] Restart `cmd/kb` without re-indexing → startup log shows the index loaded (no
       "not indexed" warning).
 
 ---
@@ -922,14 +922,14 @@ svc := kb.NewService(repo, llm)
 
 ### Verification
 #### Automated
-- [ ] `make test` passes with a hand-written `fakeLLM` (settable answer/err, call counter)
+- [x] `make test` passes with a hand-written `fakeLLM` (settable answer/err, call counter)
       and a `fakeSectionStore`. Cases (table-driven, `snake_case`):
       `strong_score_uses_markdown`, `both_weak_cannot_confirm` (`sources:[]`, LLM not
       called), `empty_query_returns_err_empty_query`, `not_indexed_returns_err_not_indexed`,
       `citations_formatted_as_file_hash_anchor`.
-- [ ] Handler test (`httptest` + mock service): empty query → 400; not-indexed → 200 with
+- [x] Handler test (`httptest` + mock service): empty query → 400; not-indexed → 200 with
       "not indexed" body; happy path → 200 with `answer`/`sources`/`strategy`.
-- [ ] `make lint` passes.
+- [x] `make lint` passes.
 
 #### Manual (with `OPENAI_API_KEY` + indexed)
 - [ ] "How long do refunds take?" → cites `refund_policy.md#refund-timeline`,
