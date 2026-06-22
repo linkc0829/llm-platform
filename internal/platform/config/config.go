@@ -61,7 +61,8 @@ type LoggerConfig struct {
 }
 
 type OpenAIConfig struct {
-	APIKey string `mapstructure:"api_key"`
+	APIKey  string `mapstructure:"api_key"`
+	LLMMode string `mapstructure:"llm_mode"`
 }
 
 // Load reads config from env (with .env fallback). Env vars are upper-cased
@@ -88,7 +89,7 @@ func LoadKB() (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
-	if cfg.OpenAI.APIKey == "" {
+	if cfg.OpenAI.LLMMode != "fake" && cfg.OpenAI.APIKey == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY is required")
 	}
 	return &cfg, nil
@@ -113,6 +114,7 @@ func newViper() *viper.Viper {
 	v.SetDefault("otel.service_name", "go-backend-template")
 	v.SetDefault("logger.level", "info")
 	v.SetDefault("logger.encoding", "json")
+	v.SetDefault("openai.llm_mode", "openai")
 
 	// Env mapping: APP_ENV -> app.env
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -140,6 +142,7 @@ func newViper() *viper.Viper {
 		"logger.level":         "LOG_LEVEL",
 		"logger.encoding":      "LOG_ENCODING",
 		"openai.api_key":       "OPENAI_API_KEY",
+		"openai.llm_mode":      "KB_LLM_MODE",
 	}
 	for k, env := range binds {
 		_ = v.BindEnv(k, env)

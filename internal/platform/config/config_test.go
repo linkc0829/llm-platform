@@ -56,3 +56,32 @@ func unsetEnv(t *testing.T, key string) {
 		}
 	})
 }
+
+func TestLoadKBAllowsFakeLLMWithoutAPIKey(t *testing.T) {
+	unsetEnv(t, "OPENAI_API_KEY")
+	unsetEnv(t, "KB_LLM_MODE")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(cwd)
+	}()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("KB_LLM_MODE=fake\n"), 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	cfg, err := LoadKB()
+	if err != nil {
+		t.Fatalf("LoadKB: %v", err)
+	}
+	if cfg.OpenAI.LLMMode != "fake" {
+		t.Fatalf("OpenAI LLM mode = %q, want fake", cfg.OpenAI.LLMMode)
+	}
+}
