@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -16,8 +17,8 @@ type Registry struct {
 
 func New() *Registry {
 	r := prometheus.NewRegistry()
-	r.MustRegister(prometheus.NewGoCollector())
-	r.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	r.MustRegister(collectors.NewGoCollector())
+	r.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	return &Registry{reg: r}
 }
 

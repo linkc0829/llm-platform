@@ -73,40 +73,6 @@ linters-settings:
             desc: "Handler must call service, not adapters directly"
 
       # ------------------------------------------------------------------
-      # Cross-feature isolation: features must not import each other.
-      # One explicit rule per feature — when you add a new feature, add a
-      # matching block here (the new-feature scaffolder reminds you). A
-      # glob-based rule was tried and rejected because it mis-blocks
-      # internal/<feature>/mocks subpackages from being imported by tests.
-      # ------------------------------------------------------------------
-      no-cross-feature-order:
-        files:
-          - "**/internal/order/**"
-        deny:
-          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/payment"
-            desc: "Cross-feature import forbidden. Define a port in order/ports.go and inject in bootstrap."
-          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/user"
-            desc: "Cross-feature import forbidden. Define a port in order/ports.go and inject in bootstrap."
-
-      no-cross-feature-payment:
-        files:
-          - "**/internal/payment/**"
-        deny:
-          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/order"
-            desc: "Cross-feature import forbidden."
-          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/user"
-            desc: "Cross-feature import forbidden."
-
-      no-cross-feature-user:
-        files:
-          - "**/internal/user/**"
-        deny:
-          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/order"
-            desc: "Cross-feature import forbidden."
-          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/payment"
-            desc: "Cross-feature import forbidden."
-
-      # ------------------------------------------------------------------
       # Shared kernel: zero dependencies (only stdlib + minimal helpers)
       # ------------------------------------------------------------------
       shared:

@@ -21,14 +21,6 @@ func (a *App) Shutdown(ctx context.Context) {
 		a.logger.Error("otel shutdown", zap.Error(err))
 	}
 
-	// Redis.
-	if err := a.rdb.Close(); err != nil {
-		a.logger.Error("redis close", zap.Error(err))
-	}
-
-	// Postgres pool.
-	a.pool.Close()
-
 	// Flush logger last (after this we cannot log).
 	_ = a.logger.Sync()
 }

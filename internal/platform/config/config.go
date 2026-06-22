@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ type Config struct {
 	JWT    JWTConfig
 	OTel   OTelConfig
 	Logger LoggerConfig
+	OpenAI OpenAIConfig
 }
 
 type AppConfig struct {
@@ -58,9 +60,41 @@ type LoggerConfig struct {
 	Encoding string `mapstructure:"encoding"`
 }
 
+type OpenAIConfig struct {
+	APIKey string `mapstructure:"api_key"`
+}
+
 // Load reads config from env (with .env fallback). Env vars are upper-cased
 // and underscored, e.g. APP_ENV, POSTGRES_DSN.
 func Load() (*Config, error) {
+	v := newViper()
+
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+// LoadKB loads config for cmd/kb. It does not require database or JWT settings.
+func LoadKB() (*Config, error) {
+	v := newViper()
+
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+	if cfg.OpenAI.APIKey == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY is required")
+	}
+	return &cfg, nil
+}
+
+func newViper() *viper.Viper {
 	v := viper.New()
 
 	// Defaults
@@ -80,7 +114,7 @@ func Load() (*Config, error) {
 	v.SetDefault("logger.level", "info")
 	v.SetDefault("logger.encoding", "json")
 
-	// Env mapping: APP_ENV → app.env
+	// Env mapping: APP_ENV -> app.env
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
@@ -105,6 +139,7 @@ func Load() (*Config, error) {
 		"otel.service_name":    "OTEL_SERVICE_NAME",
 		"logger.level":         "LOG_LEVEL",
 		"logger.encoding":      "LOG_ENCODING",
+		"openai.api_key":       "OPENAI_API_KEY",
 	}
 	for k, env := range binds {
 		_ = v.BindEnv(k, env)
@@ -115,16 +150,20 @@ func Load() (*Config, error) {
 	v.SetConfigType("env")
 	v.AddConfigPath(".")
 	_ = v.ReadInConfig() // ignore if missing
+	applyEnvFileAliases(v, binds)
 
-	var cfg Config
-	if err := v.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("unmarshal config: %w", err)
-	}
+	return v
+}
 
-	if err := cfg.validate(); err != nil {
-		return nil, err
+func applyEnvFileAliases(v *viper.Viper, binds map[string]string) {
+	for key, env := range binds {
+		if _, ok := os.LookupEnv(env); ok {
+			continue
+		}
+		if v.InConfig(env) {
+			v.Set(key, v.Get(env))
+		}
 	}
-	return &cfg, nil
 }
 
 func (c *Config) validate() error {

@@ -1,6 +1,6 @@
 .PHONY: help build run test test-unit test-integration lint fmt vet \
-        sqlc-generate migrate-up migrate-down migrate-create mock-gen tidy clean \
-        new-feature openapi-lint hooks-install verify
+        migrate-up migrate-down migrate-create mock-gen tidy clean \
+        openapi-lint hooks-install verify
 
 # ============================================================================
 # Variables
@@ -24,7 +24,7 @@ build: ## Build api binary
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/api
 
-run: ## Run api locally (requires local postgres+redis)
+run: ## Run api locally
 	go run ./cmd/api
 
 # ============================================================================
@@ -35,7 +35,7 @@ test: test-unit ## Run unit tests (default)
 test-unit: ## Run unit tests only (skip integration)
 	go test -race -short -count=1 ./...
 
-test-integration: ## Run integration tests (requires local postgres)
+test-integration: ## Run integration tests
 	go test -race -count=1 -tags=integration ./test/integration/...
 
 test-cover: ## Run tests with coverage
@@ -57,12 +57,6 @@ vet: ## Run go vet
 tidy: ## Tidy go.mod
 	go mod tidy
 
-# ============================================================================
-# Code generation
-# ============================================================================
-sqlc-generate: ## Generate sqlc code
-	sqlc generate
-
 mock-gen: ## Generate mocks for all ports.go (requires mockgen)
 	go generate ./...
 
@@ -77,13 +71,6 @@ migrate-down: ## Rollback last migration
 
 migrate-create: ## Create new migration: make migrate-create NAME=add_xxx
 	migrate create -ext sql -dir $(MIGRATIONS) -seq $(NAME)
-
-# ============================================================================
-# Scaffolding
-# ============================================================================
-new-feature: ## Scaffold a new feature: make new-feature name=foo
-	@if [ -z "$(name)" ]; then echo "usage: make new-feature name=<snake_case>"; exit 1; fi
-	go run ./scripts/new-feature -name='$(name)'
 
 # ============================================================================
 # API contract
