@@ -644,10 +644,10 @@ Gift cards, digital downloads, and final-sale items cannot be refunded.
 
 ### Verification
 #### Automated
-- [ ] `make test` passes; unit tests cover: `slugify` (heading → GitHub anchor),
+- [x] `make test` passes; unit tests cover: `slugify` (heading → GitHub anchor),
       markdown parse (3 docs → expected section count), `tokenize`, `BM25Score` ordering
       (a section containing the query terms scores above one that doesn't).
-- [ ] `make lint` passes.
+- [x] `make lint` passes.
 
 #### Manual
 - [ ] `POST /index` → `200 {"files_indexed":3,"sections_indexed":N}`.

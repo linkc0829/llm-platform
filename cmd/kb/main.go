@@ -28,7 +28,15 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	svc := kb.NewService()
+	repo := kb.NewMarkdownRepo("docs", ".kb")
+	svc := kb.NewService(repo)
+	if err := svc.LoadOnStartup(ctx); err != nil {
+		if errors.Is(err, kb.ErrNotIndexed) {
+			lg.Warn("knowledge base not indexed yet; POST /index to build it")
+		} else {
+			lg.Sugar().Fatalf("load index: %v", err)
+		}
+	}
 	h := kb.NewHandler(svc)
 
 	engine := httpserver.New(lg)
