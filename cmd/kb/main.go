@@ -31,6 +31,7 @@ func main() {
 
 	repo := kb.NewMarkdownRepo("docs", ".kb")
 	vecRepo := kb.NewVectorRepo(".kb")
+	sessions := kb.NewInProcStore()
 	var llm kb.LLM
 	var embedder kb.Embedder
 	if strings.EqualFold(cfg.OpenAI.LLMMode, "fake") {
@@ -43,7 +44,7 @@ func main() {
 		llm = oai
 		embedder = oai
 	}
-	svc := kb.NewService(repo, llm, embedder, vecRepo)
+	svc := kb.NewService(repo, llm, embedder, vecRepo, sessions)
 	if err := svc.LoadOnStartup(ctx); err != nil {
 		if errors.Is(err, kb.ErrNotIndexed) {
 			lg.Warn("knowledge base not indexed yet; POST /index to build it")

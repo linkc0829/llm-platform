@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 type fakeSectionStore struct {
@@ -95,7 +96,7 @@ func TestServiceIndexBuildsAndPersistsIndex(t *testing.T) {
 	store := &fakeSectionStore{parseSections: []Section{section}, parseFiles: 3}
 	embedder := &fakeEmbedder{vectors: map[string][]float32{section.Body(): {1, 0}}}
 	vectors := &fakeVectorStore{}
-	svc := NewService(store, nil, embedder, vectors)
+	svc := NewService(store, nil, embedder, vectors, nil)
 
 	files, sections, err := svc.Index(context.Background())
 	if err != nil {
@@ -116,7 +117,7 @@ func TestServiceIndexBuildsAndPersistsIndex(t *testing.T) {
 }
 
 func TestServiceLoadOnStartupHandlesMissingIndex(t *testing.T) {
-	svc := NewService(&fakeSectionStore{loadErr: ErrNotIndexed}, nil, nil, nil)
+	svc := NewService(&fakeSectionStore{loadErr: ErrNotIndexed}, nil, nil, nil, nil)
 	err := svc.LoadOnStartup(context.Background())
 	if !errors.Is(err, ErrNotIndexed) {
 		t.Errorf("Service.LoadOnStartup() error = %v, want ErrNotIndexed", err)
@@ -182,7 +183,7 @@ func TestServiceChat(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			llm := &fakeLLM{answer: tt.wantAnswer}
-			svc := NewService(&fakeSectionStore{}, llm, nil, nil)
+			svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore())
 			svc.indexed = sections
 			svc.corpus = BuildCorpus(sections)
 			svc.ready = tt.ready
@@ -230,7 +231,7 @@ func TestServiceChatWeakScoreUsesVectorRetrieval(t *testing.T) {
 	}
 	llm := &fakeLLM{answer: "vector answer"}
 	embedder := &fakeEmbedder{vectors: map[string][]float32{"weak weak": {0, 1}}}
-	svc := NewService(&fakeSectionStore{}, llm, embedder, nil)
+	svc := NewService(&fakeSectionStore{}, llm, embedder, nil, NewInProcStore())
 	svc.indexed = []Section{bm25Section, vectorSection}
 	svc.corpus = Corpus{
 		DocTokens: [][]string{{"weak"}, {"other"}},
@@ -259,6 +260,73 @@ func TestServiceChatWeakScoreUsesVectorRetrieval(t *testing.T) {
 	}
 	if len(llm.sections) == 0 || llm.sections[0].Citation() != vectorSection.Citation() {
 		t.Errorf("Service.Chat(weak vector query) LLM first section = %#v, want %q", llm.sections, vectorSection.Citation())
+	}
+}
+
+func TestServiceChatGeneratesSessionID(t *testing.T) {
+	sections := mustSampleSections(t)
+	llm := &fakeLLM{answer: "Refunds are processed within 5-7 business days."}
+	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore())
+	svc.indexed = sections
+	svc.corpus = BuildCorpus(sections)
+	svc.ready = true
+
+	_, sessionID, err := svc.Chat(context.Background(), "How long do refunds take?", "")
+	if err != nil {
+		t.Fatalf("Service.Chat(empty session) error = %v, want nil", err)
+	}
+	if sessionID == "" {
+		t.Errorf("Service.Chat(empty session) sessionID = empty, want generated id")
+	}
+}
+
+func TestServiceChatUsesHistoryForFollowUpRetrieval(t *testing.T) {
+	sections := mustSampleSections(t)
+	llm := &fakeLLM{answer: "answer"}
+	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore())
+	svc.indexed = sections
+	svc.corpus = BuildCorpus(sections)
+	svc.ready = true
+
+	_, sessionID, err := svc.Chat(context.Background(), "How long do refunds take?", "")
+	if err != nil {
+		t.Fatalf("Service.Chat(first turn) error = %v, want nil", err)
+	}
+	answer, _, err := svc.Chat(context.Background(), "And which items can't be refunded?", sessionID)
+	if err != nil {
+		t.Fatalf("Service.Chat(follow-up) error = %v, want nil", err)
+	}
+
+	gotSources := citationStrings(answer.Sources())
+	wantSources := []string{"refund_policy.md#non-refundable-items"}
+	if len(gotSources) == 0 || gotSources[0] != wantSources[0] {
+		t.Errorf("Service.Chat(follow-up) first source = %#v, want %#v", gotSources, wantSources)
+	}
+	if len(llm.history) != 1 || llm.history[0].Query != "How long do refunds take?" {
+		t.Errorf("Service.Chat(follow-up) history = %#v, want first turn", llm.history)
+	}
+	if len(llm.sections) == 0 || llm.sections[0].Citation() != "refund_policy.md#non-refundable-items" {
+		t.Errorf("Service.Chat(follow-up) LLM first section = %#v, want non-refundable section", llm.sections)
+	}
+}
+
+func TestInProcStoreKeepsRecentTurnsAndExpiresIdleSessions(t *testing.T) {
+	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
+	store := NewInProcStore()
+	store.now = func() time.Time { return now }
+
+	for i := 0; i < 6; i++ {
+		store.Append(context.Background(), "s1", Turn{Query: string(rune('a' + i)), Answer: "answer"})
+	}
+	turns := store.Get(context.Background(), "s1")
+	if len(turns) != 5 || turns[0].Query != "b" || turns[4].Query != "f" {
+		t.Errorf("InProcStore.Get(s1) turns = %#v, want last five b..f", turns)
+	}
+
+	now = now.Add(31 * time.Minute)
+	turns = store.Get(context.Background(), "s1")
+	if len(turns) != 0 {
+		t.Errorf("InProcStore.Get(expired s1) turns = %#v, want empty", turns)
 	}
 }
 

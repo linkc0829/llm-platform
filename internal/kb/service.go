@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -26,14 +28,15 @@ type Service struct {
 	llm      LLM
 	embedder Embedder
 	vectors  VectorStore
+	sessions SessionStore
 	vecMap   map[string][]float32
 	corpus   Corpus
 	indexed  []Section
 	ready    bool
 }
 
-func NewService(sections sectionStore, llm LLM, embedder Embedder, vectors VectorStore) *Service {
-	return &Service{sections: sections, llm: llm, embedder: embedder, vectors: vectors}
+func NewService(sections sectionStore, llm LLM, embedder Embedder, vectors VectorStore, sessions SessionStore) *Service {
+	return &Service{sections: sections, llm: llm, embedder: embedder, vectors: vectors, sessions: sessions}
 }
 
 func (s *Service) Index(ctx context.Context) (int, int, error) {
@@ -85,41 +88,56 @@ func (s *Service) Chat(ctx context.Context, query, sessionID string) (Answer, st
 	if strings.TrimSpace(query) == "" {
 		return Answer{}, sessionID, ErrEmptyQuery
 	}
+	if sessionID == "" {
+		sessionID = uuid.NewString()
+	}
 	if !s.ready {
 		return Answer{}, sessionID, ErrNotIndexed
 	}
 
-	ranked := s.corpus.RankBM25(tokenize(query))
+	history := s.history(ctx, sessionID)
+	contextualQuery := composeQuery(history, query)
+	ranked := s.corpus.RankBM25(tokenize(contextualQuery))
 	if len(ranked) == 0 || ranked[0].Score < minThreshold {
-		return s.cannotConfirm(), sessionID, nil
+		answer := s.cannotConfirm()
+		s.appendTurn(ctx, sessionID, query, answer)
+		return answer, sessionID, nil
 	}
 
 	if ranked[0].Score >= strongThreshold || len(s.vecMap) == 0 || s.embedder == nil {
 		sections := s.topSections(ranked, topK)
-		text, err := s.llm.Answer(ctx, query, sections, nil)
+		text, err := s.llm.Answer(ctx, query, sections, history)
 		if err != nil {
 			return Answer{}, sessionID, fmt.Errorf("llm answer: %w", err)
 		}
-		return NewAnswer(text, citationsFor(sections), "markdown"), sessionID, nil
+		answer := NewAnswer(text, citationsFor(sections), "markdown")
+		s.appendTurn(ctx, sessionID, query, answer)
+		return answer, sessionID, nil
 	}
 
-	queryVectors, err := s.embedder.Embed(ctx, []string{query})
+	queryVectors, err := s.embedder.Embed(ctx, []string{contextualQuery})
 	if err != nil {
 		return Answer{}, sessionID, fmt.Errorf("embed query: %w", err)
 	}
 	if len(queryVectors) == 0 {
-		return s.cannotConfirm(), sessionID, nil
+		answer := s.cannotConfirm()
+		s.appendTurn(ctx, sessionID, query, answer)
+		return answer, sessionID, nil
 	}
 
 	sections := s.topByCosine(queryVectors[0], topK)
 	if len(sections) == 0 {
-		return s.cannotConfirm(), sessionID, nil
+		answer := s.cannotConfirm()
+		s.appendTurn(ctx, sessionID, query, answer)
+		return answer, sessionID, nil
 	}
-	text, err := s.llm.Answer(ctx, query, sections, nil)
+	text, err := s.llm.Answer(ctx, query, sections, history)
 	if err != nil {
 		return Answer{}, sessionID, fmt.Errorf("llm answer: %w", err)
 	}
-	return NewAnswer(text, citationsFor(sections), "vector"), sessionID, nil
+	answer := NewAnswer(text, citationsFor(sections), "vector")
+	s.appendTurn(ctx, sessionID, query, answer)
+	return answer, sessionID, nil
 }
 
 func (s *Service) embedSections(ctx context.Context, secs []Section) (map[string][]float32, error) {
@@ -181,6 +199,33 @@ func (s *Service) topByCosine(queryVec []float32, k int) []Section {
 
 func (s *Service) cannotConfirm() Answer {
 	return NewAnswer("I cannot confirm that from the knowledge base.", nil, "")
+}
+
+func (s *Service) history(ctx context.Context, sessionID string) []Turn {
+	if s.sessions == nil {
+		return nil
+	}
+	return s.sessions.Get(ctx, sessionID)
+}
+
+func (s *Service) appendTurn(ctx context.Context, sessionID, query string, answer Answer) {
+	if s.sessions == nil {
+		return
+	}
+	s.sessions.Append(ctx, sessionID, Turn{Query: query, Answer: answer.Text()})
+}
+
+func composeQuery(history []Turn, query string) string {
+	if len(history) == 0 {
+		return query
+	}
+	var b strings.Builder
+	for _, turn := range history {
+		b.WriteString(turn.Query)
+		b.WriteByte(' ')
+	}
+	b.WriteString(query)
+	return b.String()
 }
 
 func bodiesOf(sections []Section) []string {

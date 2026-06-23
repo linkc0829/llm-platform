@@ -1087,9 +1087,9 @@ svc := kb.NewService(repo, oai, oai, vecRepo)
 - [x] `make lint` passes.
 
 #### Manual
-- [ ] `POST /index` writes `.kb/faiss_index/metadata.json` (valid JSON, `model` +
+- [x] `POST /index` writes `.kb/faiss_index/metadata.json` (valid JSON, `model` +
       `vectors` map keyed by `file#anchor`).
-- [ ] A vague in-scope paraphrase (e.g. "I'm unhappy with my purchase, can I get money
+- [x] A vague in-scope paraphrase (e.g. "I'm unhappy with my purchase, can I get money
       back?") reports `strategy:"vector"` and still cites the refund section.
 
 ---
@@ -1225,13 +1225,13 @@ svc := kb.NewService(repo, oai, oai, vecRepo, sessions)
 
 ### Verification
 #### Automated
-- [ ] `make test` passes; multi-turn test: a `fakeSectionStore` with refund sections, a
+- [x] `make test` passes; multi-turn test: a `fakeSectionStore` with refund sections, a
       `fakeLLM` that records the sections it received. First query "How long do refunds
       take?" then same-session "And which items can't be refunded?" → the second call's
       `composeQuery` causes BM25 to rank `non-refundable-items` top → asserts the fake LLM
       received that section / citation is `refund_policy.md#non-refundable-items`.
-- [ ] Test: omitted `session_id` → response returns a non-empty generated `session_id`.
-- [ ] `make lint` passes.
+- [x] Test: omitted `session_id` → response returns a non-empty generated `session_id`.
+- [x] `make lint` passes.
 
 #### Manual
 - [ ] "How long do refunds take?" then (same `session_id`) "And which items can't be
@@ -1258,4 +1258,5 @@ constants so: in-scope sharp queries score ≥ `strongThreshold` (markdown), a v
 paraphrase lands between the thresholds (vector), and "restaurants" falls below
 `minThreshold` (cannot-confirm). This is design Open Risks #2–3; expect iteration in P3/P4.
 ```
+
 
