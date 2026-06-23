@@ -5,8 +5,8 @@
 # ============================================================================
 # Variables
 # ============================================================================
-BINARY_NAME := api
-BUILD_DIR   := ./bin
+BINARY_NAME := kb
+BUILD_DIR   := bin
 DB_URL      := postgres://postgres:postgres@localhost:5432/app?sslmode=disable
 MIGRATIONS  := ./migrations
 
@@ -20,12 +20,12 @@ help: ## Show this help
 # ============================================================================
 # Build & Run
 # ============================================================================
-build: ## Build api binary
-	@mkdir -p $(BUILD_DIR)
-	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/api
+build: ## Build kb binary
+	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
+	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/kb
 
-run: ## Run api locally
-	go run ./cmd/api
+run: ## Run kb locally
+	go run ./cmd/kb
 
 # ============================================================================
 # Test
@@ -95,3 +95,4 @@ verify: lint test ## Run lint and unit tests (what CI / pre-commit should run)
 # ============================================================================
 clean: ## Remove build artifacts
 	rm -rf $(BUILD_DIR) coverage.out coverage.html
+

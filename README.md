@@ -60,7 +60,7 @@ This repo is a starting point, not a library. When you fork it for a new project
 ## Directory layout
 
 ```
-cmd/api/main.go              # 30-line entrypoint
+cmd/kb/main.go               # knowledge-base bot entrypoint
 internal/
   order/  payment/  user/    # feature slices (the hexagons)
   shared/                    # zero-dependency value objects (Money, IDs, …)
@@ -80,8 +80,8 @@ Makefile
 ## Make targets
 
 ```
-make run                  # run api locally (requires local postgres+redis)
-make build                # build ./bin/api
+make run                  # run kb bot locally
+make build                # build ./bin/kb
 make test                 # unit tests
 make test-integration     # integration tests (requires local postgres)
 make test-cover           # html coverage report
@@ -126,3 +126,4 @@ The template intentionally ships small. Recommended next moves for system-design
 - **Saga** — multi-feature orchestration under `internal/saga/`
 
 Each fits the existing structure with no architectural changes.
+

@@ -14,7 +14,7 @@ import (
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/otel"
 )
 
-// App holds every wired-up resource the api binary needs. main.go calls Run()
+// App holds every wired-up resource a bootstrap-backed binary needs. main.go calls Run()
 // and Shutdown().
 type App struct {
 	logger       *zap.Logger
@@ -63,3 +63,4 @@ func (a *App) Logger() *zap.Logger { return a.logger }
 
 // Run starts the HTTP server. Blocks until Shutdown is called or it errors.
 func (a *App) Run() error { return a.server.Start() }
+
