@@ -99,20 +99,11 @@ func (s *Service) Chat(ctx context.Context, query, sessionID string) (Answer, st
 	contextualQuery := composeQuery(history, query)
 	ranked := corpus.RankBM25(tokenize(contextualQuery))
 	if len(ranked) == 0 || ranked[0].Score < minThreshold {
-		answer := s.cannotConfirm()
-		s.appendTurn(ctx, sessionID, query, answer)
-		return answer, sessionID, nil
+		return s.deny(ctx, sessionID, query)
 	}
 
 	if ranked[0].Score >= strongThreshold || len(vecMap) == 0 || s.embedder == nil {
-		sections := topSections(indexed, ranked, topK)
-		text, err := s.llm.Answer(ctx, query, sections, history)
-		if err != nil {
-			return Answer{}, sessionID, fmt.Errorf("llm answer: %w", err)
-		}
-		answer := NewAnswer(text, citationsFor(sections), "markdown")
-		s.appendTurn(ctx, sessionID, query, answer)
-		return answer, sessionID, nil
+		return s.answerFrom(ctx, sessionID, query, topSections(indexed, ranked, topK), history, "markdown")
 	}
 
 	queryVectors, err := s.embedder.Embed(ctx, []string{contextualQuery})
@@ -120,22 +111,30 @@ func (s *Service) Chat(ctx context.Context, query, sessionID string) (Answer, st
 		return Answer{}, sessionID, fmt.Errorf("embed query: %w", err)
 	}
 	if len(queryVectors) == 0 {
-		answer := s.cannotConfirm()
-		s.appendTurn(ctx, sessionID, query, answer)
-		return answer, sessionID, nil
+		return s.deny(ctx, sessionID, query)
 	}
 
 	sections := topByCosine(indexed, vecMap, queryVectors[0], topK)
 	if len(sections) == 0 {
-		answer := s.cannotConfirm()
-		s.appendTurn(ctx, sessionID, query, answer)
-		return answer, sessionID, nil
+		return s.deny(ctx, sessionID, query)
 	}
+	return s.answerFrom(ctx, sessionID, query, sections, history, "vector")
+}
+
+// deny records the turn and returns the cannot-confirm answer.
+func (s *Service) deny(ctx context.Context, sessionID, query string) (Answer, string, error) {
+	answer := s.cannotConfirm()
+	s.appendTurn(ctx, sessionID, query, answer)
+	return answer, sessionID, nil
+}
+
+// answerFrom grounds the LLM on the given sections, records the turn, and returns the answer.
+func (s *Service) answerFrom(ctx context.Context, sessionID, query string, sections []Section, history []Turn, strategy string) (Answer, string, error) {
 	text, err := s.llm.Answer(ctx, query, sections, history)
 	if err != nil {
 		return Answer{}, sessionID, fmt.Errorf("llm answer: %w", err)
 	}
-	answer := NewAnswer(text, citationsFor(sections), "vector")
+	answer := NewAnswer(text, citationsFor(sections), strategy)
 	s.appendTurn(ctx, sessionID, query, answer)
 	return answer, sessionID, nil
 }
