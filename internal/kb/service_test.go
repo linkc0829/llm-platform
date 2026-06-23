@@ -3,6 +3,7 @@ package kb
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -111,8 +112,9 @@ func TestServiceIndexBuildsAndPersistsIndex(t *testing.T) {
 	if vectors.savedModel != embeddingModel || len(vectors.saved) != 1 {
 		t.Errorf("Service.Index() saved vectors model/count = %q/%d, want %q/1", vectors.savedModel, len(vectors.saved), embeddingModel)
 	}
-	if !svc.ready || svc.corpus.N != 1 || len(svc.indexed) != 1 {
-		t.Errorf("Service.Index() ready/corpus/indexed = %v/%d/%d, want true/1/1", svc.ready, svc.corpus.N, len(svc.indexed))
+	_, corpus, indexedVectors, ready := svc.indexSnapshot()
+	if !ready || corpus.N != 1 || len(indexedVectors) != 1 {
+		t.Errorf("Service.Index() ready/corpus/vectors = %v/%d/%d, want true/1/1", ready, corpus.N, len(indexedVectors))
 	}
 }
 
@@ -122,6 +124,34 @@ func TestServiceLoadOnStartupHandlesMissingIndex(t *testing.T) {
 	if !errors.Is(err, ErrNotIndexed) {
 		t.Errorf("Service.LoadOnStartup() error = %v, want ErrNotIndexed", err)
 	}
+}
+
+func TestServiceConcurrentIndexAndChatUsesConsistentSnapshot(t *testing.T) {
+	sections := mustSampleSections(t)
+	store := &fakeSectionStore{parseSections: sections, parseFiles: 3}
+	svc := NewService(store, NewFakeLLM(), nil, nil, NewInProcStore())
+	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, true)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if _, _, err := svc.Index(context.Background()); err != nil {
+			t.Errorf("Service.Index() error = %v, want nil", err)
+		}
+	}()
+
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, _, err := svc.Chat(context.Background(), "How long do refunds take?", "session")
+			if err != nil {
+				t.Errorf("Service.Chat(concurrent %d) error = %v, want nil", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
 }
 
 func TestServiceChat(t *testing.T) {
@@ -184,9 +214,7 @@ func TestServiceChat(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			llm := &fakeLLM{answer: tt.wantAnswer}
 			svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore())
-			svc.indexed = sections
-			svc.corpus = BuildCorpus(sections)
-			svc.ready = tt.ready
+			svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, tt.ready)
 
 			answer, sessionID, err := svc.Chat(context.Background(), tt.query, "session-1")
 			if !errors.Is(err, tt.wantErr) {
@@ -232,19 +260,16 @@ func TestServiceChatWeakScoreUsesVectorRetrieval(t *testing.T) {
 	llm := &fakeLLM{answer: "vector answer"}
 	embedder := &fakeEmbedder{vectors: map[string][]float32{"weak weak": {0, 1}}}
 	svc := NewService(&fakeSectionStore{}, llm, embedder, nil, NewInProcStore())
-	svc.indexed = []Section{bm25Section, vectorSection}
-	svc.corpus = Corpus{
+	svc.storeIndexSnapshot([]Section{bm25Section, vectorSection}, Corpus{
 		DocTokens: [][]string{{"weak"}, {"other"}},
 		DocFreq:   map[string]int{"weak": 1, "other": 1},
 		DocLen:    []int{1, 1},
 		AvgLen:    1,
 		N:         2,
-	}
-	svc.vecMap = map[string][]float32{
+	}, map[string][]float32{
 		bm25Section.Citation():   {1, 0},
 		vectorSection.Citation(): {0, 1},
-	}
-	svc.ready = true
+	}, true)
 
 	answer, _, err := svc.Chat(context.Background(), "weak weak", "session-1")
 	if err != nil {
@@ -267,9 +292,7 @@ func TestServiceChatGeneratesSessionID(t *testing.T) {
 	sections := mustSampleSections(t)
 	llm := &fakeLLM{answer: "Refunds are processed within 5-7 business days."}
 	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore())
-	svc.indexed = sections
-	svc.corpus = BuildCorpus(sections)
-	svc.ready = true
+	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, true)
 
 	_, sessionID, err := svc.Chat(context.Background(), "How long do refunds take?", "")
 	if err != nil {
@@ -284,9 +307,7 @@ func TestServiceChatUsesHistoryForFollowUpRetrieval(t *testing.T) {
 	sections := mustSampleSections(t)
 	llm := &fakeLLM{answer: "answer"}
 	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore())
-	svc.indexed = sections
-	svc.corpus = BuildCorpus(sections)
-	svc.ready = true
+	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, true)
 
 	_, sessionID, err := svc.Chat(context.Background(), "How long do refunds take?", "")
 	if err != nil {

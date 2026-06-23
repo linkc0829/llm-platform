@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// FakeLLM is a local/demo mode for quota-free manual verification; its vectors are intentionally simple and corpus-coupled.
 type FakeLLM struct{}
 
 func NewFakeLLM() *FakeLLM { return &FakeLLM{} }

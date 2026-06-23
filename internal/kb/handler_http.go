@@ -26,6 +26,7 @@ func (h *Handler) health(c *gin.Context) {
 	c.JSON(http.StatusOK, HealthResponse{Status: "ok"})
 }
 
+// ponytail: public local-tool endpoint; add rate limiting/auth before exposing beyond localhost.
 func (h *Handler) index(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
@@ -38,6 +39,7 @@ func (h *Handler) index(c *gin.Context) {
 	c.JSON(http.StatusOK, IndexResponse{FilesIndexed: files, SectionsIndexed: sections})
 }
 
+// ponytail: public local-tool endpoint; add rate limiting/auth before exposing beyond localhost.
 func (h *Handler) chat(c *gin.Context) {
 	var req ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

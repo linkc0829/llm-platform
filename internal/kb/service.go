@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 )
 
 const (
+	// Thresholds are empirical for the sample docs; see the QRSPI plan calibration note.
 	strongThreshold = 1.7
 	minThreshold    = 1.2
 	topK            = 3
@@ -29,10 +31,12 @@ type Service struct {
 	embedder Embedder
 	vectors  VectorStore
 	sessions SessionStore
-	vecMap   map[string][]float32
-	corpus   Corpus
-	indexed  []Section
-	ready    bool
+
+	mu      sync.RWMutex
+	vecMap  map[string][]float32
+	corpus  Corpus
+	indexed []Section
+	ready   bool
 }
 
 func NewService(sections sectionStore, llm LLM, embedder Embedder, vectors VectorStore, sessions SessionStore) *Service {
@@ -53,10 +57,7 @@ func (s *Service) Index(ctx context.Context) (int, int, error) {
 		return 0, 0, err
 	}
 
-	s.indexed = secs
-	s.corpus = BuildCorpus(secs)
-	s.vecMap = vecMap
-	s.ready = true
+	s.storeIndexSnapshot(secs, BuildCorpus(secs), vecMap, true)
 	return files, len(secs), nil
 }
 
@@ -77,10 +78,7 @@ func (s *Service) LoadOnStartup(ctx context.Context) error {
 		}
 	}
 
-	s.indexed = secs
-	s.corpus = BuildCorpus(secs)
-	s.vecMap = vecMap
-	s.ready = true
+	s.storeIndexSnapshot(secs, BuildCorpus(secs), vecMap, true)
 	return nil
 }
 
@@ -91,21 +89,23 @@ func (s *Service) Chat(ctx context.Context, query, sessionID string) (Answer, st
 	if sessionID == "" {
 		sessionID = uuid.NewString()
 	}
-	if !s.ready {
+
+	indexed, corpus, vecMap, ready := s.indexSnapshot()
+	if !ready {
 		return Answer{}, sessionID, ErrNotIndexed
 	}
 
 	history := s.history(ctx, sessionID)
 	contextualQuery := composeQuery(history, query)
-	ranked := s.corpus.RankBM25(tokenize(contextualQuery))
+	ranked := corpus.RankBM25(tokenize(contextualQuery))
 	if len(ranked) == 0 || ranked[0].Score < minThreshold {
 		answer := s.cannotConfirm()
 		s.appendTurn(ctx, sessionID, query, answer)
 		return answer, sessionID, nil
 	}
 
-	if ranked[0].Score >= strongThreshold || len(s.vecMap) == 0 || s.embedder == nil {
-		sections := s.topSections(ranked, topK)
+	if ranked[0].Score >= strongThreshold || len(vecMap) == 0 || s.embedder == nil {
+		sections := topSections(indexed, ranked, topK)
 		text, err := s.llm.Answer(ctx, query, sections, history)
 		if err != nil {
 			return Answer{}, sessionID, fmt.Errorf("llm answer: %w", err)
@@ -125,7 +125,7 @@ func (s *Service) Chat(ctx context.Context, query, sessionID string) (Answer, st
 		return answer, sessionID, nil
 	}
 
-	sections := s.topByCosine(queryVectors[0], topK)
+	sections := topByCosine(indexed, vecMap, queryVectors[0], topK)
 	if len(sections) == 0 {
 		answer := s.cannotConfirm()
 		s.appendTurn(ctx, sessionID, query, answer)
@@ -163,7 +163,22 @@ func (s *Service) embedSections(ctx context.Context, secs []Section) (map[string
 	return vecMap, nil
 }
 
-func (s *Service) topSections(ranked []ScoredSection, k int) []Section {
+func (s *Service) storeIndexSnapshot(indexed []Section, corpus Corpus, vecMap map[string][]float32, ready bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.indexed = indexed
+	s.corpus = corpus
+	s.vecMap = vecMap
+	s.ready = ready
+}
+
+func (s *Service) indexSnapshot() ([]Section, Corpus, map[string][]float32, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.indexed, s.corpus, s.vecMap, s.ready
+}
+
+func topSections(indexed []Section, ranked []ScoredSection, k int) []Section {
 	if k > len(ranked) {
 		k = len(ranked)
 	}
@@ -172,17 +187,17 @@ func (s *Service) topSections(ranked []ScoredSection, k int) []Section {
 		if scored.Score <= 0 {
 			continue
 		}
-		if scored.Index >= 0 && scored.Index < len(s.indexed) {
-			sections = append(sections, s.indexed[scored.Index])
+		if scored.Index >= 0 && scored.Index < len(indexed) {
+			sections = append(sections, indexed[scored.Index])
 		}
 	}
 	return sections
 }
 
-func (s *Service) topByCosine(queryVec []float32, k int) []Section {
-	ranked := make([]ScoredSection, 0, len(s.indexed))
-	for i, section := range s.indexed {
-		score := Cosine(queryVec, s.vecMap[section.Citation()])
+func topByCosine(indexed []Section, vecMap map[string][]float32, queryVec []float32, k int) []Section {
+	ranked := make([]ScoredSection, 0, len(indexed))
+	for i, section := range indexed {
+		score := Cosine(queryVec, vecMap[section.Citation()])
 		if score <= 0 {
 			continue
 		}
@@ -194,7 +209,7 @@ func (s *Service) topByCosine(queryVec []float32, k int) []Section {
 		}
 		return ranked[i].Score > ranked[j].Score
 	})
-	return s.topSections(ranked, k)
+	return topSections(indexed, ranked, k)
 }
 
 func (s *Service) cannotConfirm() Answer {
