@@ -1234,9 +1234,9 @@ svc := kb.NewService(repo, oai, oai, vecRepo, sessions)
 - [x] `make lint` passes.
 
 #### Manual
-- [ ] "How long do refunds take?" then (same `session_id`) "And which items can't be
+- [x] "How long do refunds take?" then (same `session_id`) "And which items can't be
       refunded?" → second answer cites `refund_policy.md#non-refundable-items`.
-- [ ] Full acceptance criteria 1–4 (spec §9) pass end-to-end.
+- [x] Full acceptance criteria 1–4 (spec §9) pass end-to-end.
 
 ---
 
