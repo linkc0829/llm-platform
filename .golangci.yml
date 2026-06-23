@@ -17,8 +17,6 @@ linters:
     - bodyclose
     - errorlint
     - nilerr
-    - rowserrcheck
-    - sqlclosecheck
 
 linters-settings:
   errorlint:
@@ -72,18 +70,6 @@ linters-settings:
           - pkg: "github.com/redis/go-redis"
             desc: "Handler must call service, not adapters directly"
 
-      # ------------------------------------------------------------------
-      # Shared kernel: zero dependencies (only stdlib + minimal helpers)
-      # ------------------------------------------------------------------
-      shared:
-        files:
-          - "**/internal/shared/**"
-        deny:
-          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform"
-            desc: "Shared kernel must not depend on platform"
-          - pkg: "github.com/jackc/pgx"
-          - pkg: "github.com/redis/go-redis"
-          - pkg: "github.com/gin-gonic/gin"
 
 issues:
   exclude-rules:
@@ -91,3 +77,4 @@ issues:
       linters:
         - gosec
         - errcheck
+

@@ -1,2 +1,0 @@
--- Initial schema intentionally empty.
--- The KB bot does not use application database tables yet.

@@ -1,6 +1,0 @@
-openapi: 3.0.3
-info:
-  title: Knowledge Base Q&A Bot API
-  version: 0.1.0
-paths: {}
-components: {}

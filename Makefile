@@ -1,14 +1,10 @@
-.PHONY: help build run test test-unit test-integration lint fmt vet \
-        migrate-up migrate-down migrate-create mock-gen tidy clean \
-        openapi-lint hooks-install verify
+.PHONY: help build run test test-unit lint fmt vet tidy clean hooks-install verify
 
 # ============================================================================
 # Variables
 # ============================================================================
 BINARY_NAME := kb
 BUILD_DIR   := bin
-DB_URL      := postgres://postgres:postgres@localhost:5432/app?sslmode=disable
-MIGRATIONS  := ./migrations
 
 # ============================================================================
 # Help
@@ -32,11 +28,8 @@ run: ## Run kb locally
 # ============================================================================
 test: test-unit ## Run unit tests (default)
 
-test-unit: ## Run unit tests only (skip integration)
+test-unit: ## Run unit tests only
 	go test -race -short -count=1 ./...
-
-test-integration: ## Run integration tests
-	go test -race -count=1 -tags=integration ./test/integration/...
 
 test-cover: ## Run tests with coverage
 	go test -race -short -coverprofile=coverage.out ./...
@@ -57,27 +50,6 @@ vet: ## Run go vet
 tidy: ## Tidy go.mod
 	go mod tidy
 
-mock-gen: ## Generate mocks for all ports.go (requires mockgen)
-	go generate ./...
-
-# ============================================================================
-# Migrations (requires golang-migrate)
-# ============================================================================
-migrate-up: ## Apply all pending migrations
-	migrate -path $(MIGRATIONS) -database "$(DB_URL)" up
-
-migrate-down: ## Rollback last migration
-	migrate -path $(MIGRATIONS) -database "$(DB_URL)" down 1
-
-migrate-create: ## Create new migration: make migrate-create NAME=add_xxx
-	migrate create -ext sql -dir $(MIGRATIONS) -seq $(NAME)
-
-# ============================================================================
-# API contract
-# ============================================================================
-openapi-lint: ## Lint api/openapi.yaml with Redocly (requires Node/npx)
-	npx --yes @redocly/cli@latest lint api/openapi.yaml
-
 # ============================================================================
 # Git hooks
 # ============================================================================
@@ -88,11 +60,12 @@ hooks-install: ## Point git at the repo's .githooks directory
 # ============================================================================
 # Aggregate
 # ============================================================================
-verify: lint test ## Run lint and unit tests (what CI / pre-commit should run)
+verify: lint test ## Run lint and unit tests
 
 # ============================================================================
 # Cleanup
 # ============================================================================
 clean: ## Remove build artifacts
-	rm -rf $(BUILD_DIR) coverage.out coverage.html
-
+	@if exist $(BUILD_DIR) rmdir /s /q $(BUILD_DIR)
+	@if exist coverage.out del coverage.out
+	@if exist coverage.html del coverage.html
