@@ -152,6 +152,22 @@ func (c Corpus) BM25Score(docIdx int, queryTokens []string) float64 {
 	return score
 }
 
+func Cosine(a, b []float32) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot, na, nb float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+		na += float64(a[i]) * float64(a[i])
+		nb += float64(b[i]) * float64(b[i])
+	}
+	if na == 0 || nb == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(na) * math.Sqrt(nb))
+}
+
 type ScoredSection struct {
 	Index int
 	Score float64

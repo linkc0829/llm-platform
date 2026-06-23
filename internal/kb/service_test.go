@@ -49,13 +49,53 @@ func (f *fakeLLM) Answer(_ context.Context, query string, sections []Section, hi
 	return f.answer, nil
 }
 
+type fakeEmbedder struct {
+	vectors map[string][]float32
+	err     error
+	calls   int
+	texts   []string
+}
+
+func (f *fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	f.calls++
+	f.texts = append([]string(nil), texts...)
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make([][]float32, 0, len(texts))
+	for _, text := range texts {
+		out = append(out, append([]float32(nil), f.vectors[text]...))
+	}
+	return out, nil
+}
+
+type fakeVectorStore struct {
+	loadVectors map[string][]float32
+	loadErr     error
+	saveErr     error
+	savedModel  string
+	saved       map[string][]float32
+}
+
+func (f *fakeVectorStore) Load(_ context.Context) (map[string][]float32, error) {
+	return f.loadVectors, f.loadErr
+}
+
+func (f *fakeVectorStore) Save(_ context.Context, model string, vectors map[string][]float32) error {
+	f.savedModel = model
+	f.saved = vectors
+	return f.saveErr
+}
+
 func TestServiceIndexBuildsAndPersistsIndex(t *testing.T) {
 	section, err := NewSection("refund_policy.md", "Refund Timeline", "Refunds take 5-7 business days.")
 	if err != nil {
 		t.Fatalf("NewSection() error = %v, want nil", err)
 	}
 	store := &fakeSectionStore{parseSections: []Section{section}, parseFiles: 3}
-	svc := NewService(store, nil)
+	embedder := &fakeEmbedder{vectors: map[string][]float32{section.Body(): {1, 0}}}
+	vectors := &fakeVectorStore{}
+	svc := NewService(store, nil, embedder, vectors)
 
 	files, sections, err := svc.Index(context.Background())
 	if err != nil {
@@ -67,13 +107,16 @@ func TestServiceIndexBuildsAndPersistsIndex(t *testing.T) {
 	if len(store.saved) != 1 || store.saved[0].Citation() != section.Citation() {
 		t.Errorf("Service.Index() saved = %#v, want parsed section", store.saved)
 	}
+	if vectors.savedModel != embeddingModel || len(vectors.saved) != 1 {
+		t.Errorf("Service.Index() saved vectors model/count = %q/%d, want %q/1", vectors.savedModel, len(vectors.saved), embeddingModel)
+	}
 	if !svc.ready || svc.corpus.N != 1 || len(svc.indexed) != 1 {
 		t.Errorf("Service.Index() ready/corpus/indexed = %v/%d/%d, want true/1/1", svc.ready, svc.corpus.N, len(svc.indexed))
 	}
 }
 
 func TestServiceLoadOnStartupHandlesMissingIndex(t *testing.T) {
-	svc := NewService(&fakeSectionStore{loadErr: ErrNotIndexed}, nil)
+	svc := NewService(&fakeSectionStore{loadErr: ErrNotIndexed}, nil, nil, nil)
 	err := svc.LoadOnStartup(context.Background())
 	if !errors.Is(err, ErrNotIndexed) {
 		t.Errorf("Service.LoadOnStartup() error = %v, want ErrNotIndexed", err)
@@ -139,7 +182,7 @@ func TestServiceChat(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			llm := &fakeLLM{answer: tt.wantAnswer}
-			svc := NewService(&fakeSectionStore{}, llm)
+			svc := NewService(&fakeSectionStore{}, llm, nil, nil)
 			svc.indexed = sections
 			svc.corpus = BuildCorpus(sections)
 			svc.ready = tt.ready
@@ -173,6 +216,49 @@ func TestServiceChat(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestServiceChatWeakScoreUsesVectorRetrieval(t *testing.T) {
+	bm25Section, err := NewSection("refund_policy.md", "Refund Timeline", "weak body")
+	if err != nil {
+		t.Fatalf("NewSection(bm25Section) error = %v, want nil", err)
+	}
+	vectorSection, err := NewSection("account_help.md", "Change Email Address", "nearest vector body")
+	if err != nil {
+		t.Fatalf("NewSection(vectorSection) error = %v, want nil", err)
+	}
+	llm := &fakeLLM{answer: "vector answer"}
+	embedder := &fakeEmbedder{vectors: map[string][]float32{"weak weak": {0, 1}}}
+	svc := NewService(&fakeSectionStore{}, llm, embedder, nil)
+	svc.indexed = []Section{bm25Section, vectorSection}
+	svc.corpus = Corpus{
+		DocTokens: [][]string{{"weak"}, {"other"}},
+		DocFreq:   map[string]int{"weak": 1, "other": 1},
+		DocLen:    []int{1, 1},
+		AvgLen:    1,
+		N:         2,
+	}
+	svc.vecMap = map[string][]float32{
+		bm25Section.Citation():   {1, 0},
+		vectorSection.Citation(): {0, 1},
+	}
+	svc.ready = true
+
+	answer, _, err := svc.Chat(context.Background(), "weak weak", "session-1")
+	if err != nil {
+		t.Fatalf("Service.Chat(weak vector query) error = %v, want nil", err)
+	}
+	if answer.Strategy() != "vector" {
+		t.Errorf("Service.Chat(weak vector query) strategy = %q, want vector", answer.Strategy())
+	}
+	gotSources := citationStrings(answer.Sources())
+	wantSources := []string{"account_help.md#change-email-address"}
+	if !sameStrings(gotSources, wantSources) {
+		t.Errorf("Service.Chat(weak vector query) sources = %#v, want %#v", gotSources, wantSources)
+	}
+	if len(llm.sections) == 0 || llm.sections[0].Citation() != vectorSection.Citation() {
+		t.Errorf("Service.Chat(weak vector query) LLM first section = %#v, want %q", llm.sections, vectorSection.Citation())
 	}
 }
 

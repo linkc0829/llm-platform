@@ -932,11 +932,11 @@ svc := kb.NewService(repo, llm)
 - [x] `make lint` passes.
 
 #### Manual (with `OPENAI_API_KEY` + indexed)
-- [ ] "How long do refunds take?" → cites `refund_policy.md#refund-timeline`,
+- [x] "How long do refunds take?" → cites `refund_policy.md#refund-timeline`,
       `strategy:"markdown"`.
-- [ ] "Can I change my email address?" → cites `account_help.md#change-email-address`.
-- [ ] "Which restaurants are nearby?" → cannot-confirm, `sources:[]`.
-- [ ] `POST /chat` before indexing → `200`, "not indexed yet" body.
+- [x] "Can I change my email address?" → cites `account_help.md#change-email-address`.
+- [x] "Which restaurants are nearby?" → cannot-confirm, `sources:[]`.
+- [x] `POST /chat` before indexing → `200`, "not indexed yet" body.
 
 ---
 
@@ -1080,11 +1080,11 @@ svc := kb.NewService(repo, oai, oai, vecRepo)
 
 ### Verification
 #### Automated
-- [ ] `make test` passes; `Cosine` unit test (orthogonal→0, identical→1, mismatched
+- [x] `make test` passes; `Cosine` unit test (orthogonal→0, identical→1, mismatched
       length→0). Service test with `fakeEmbedder` (deterministic vectors): a weak-BM25
       query routes to vector and `topByCosine` returns the section whose stored vector is
       nearest → `strategy:"vector"`.
-- [ ] `make lint` passes.
+- [x] `make lint` passes.
 
 #### Manual
 - [ ] `POST /index` writes `.kb/faiss_index/metadata.json` (valid JSON, `model` +
@@ -1258,3 +1258,4 @@ constants so: in-scope sharp queries score ≥ `strongThreshold` (markdown), a v
 paraphrase lands between the thresholds (vector), and "restaurants" falls below
 `minThreshold` (cannot-confirm). This is design Open Risks #2–3; expect iteration in P3/P4.
 ```
+

@@ -1,6 +1,9 @@
 package kb
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestSlugify(t *testing.T) {
 	tests := []struct {
@@ -58,5 +61,28 @@ func TestBM25ScoreOrdersRelevantSectionFirst(t *testing.T) {
 	ranked := corpus.RankBM25(query)
 	if len(ranked) == 0 || ranked[0].Index != 0 {
 		t.Errorf("RankBM25(%v) first = %#v, want index 0 first", query, ranked)
+	}
+}
+
+func TestCosine(t *testing.T) {
+	tests := []struct {
+		name string
+		a    []float32
+		b    []float32
+		want float64
+	}{
+		{name: "orthogonal_returns_zero", a: []float32{1, 0}, b: []float32{0, 1}, want: 0},
+		{name: "identical_returns_one", a: []float32{1, 1}, b: []float32{1, 1}, want: 1},
+		{name: "mismatched_length_returns_zero", a: []float32{1}, b: []float32{1, 1}, want: 0},
+		{name: "zero_norm_returns_zero", a: []float32{0, 0}, b: []float32{1, 1}, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Cosine(tt.a, tt.b)
+			if math.Abs(got-tt.want) > 0.000001 {
+				t.Errorf("Cosine(%v, %v) = %f, want %f", tt.a, tt.b, got, tt.want)
+			}
+		})
 	}
 }

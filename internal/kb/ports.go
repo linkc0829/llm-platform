@@ -12,3 +12,12 @@ type SectionStore interface {
 type LLM interface {
 	Answer(ctx context.Context, query string, sections []Section, history []Turn) (string, error)
 }
+
+type Embedder interface {
+	Embed(ctx context.Context, texts []string) ([][]float32, error)
+}
+
+type VectorStore interface {
+	Load(ctx context.Context) (map[string][]float32, error)
+	Save(ctx context.Context, model string, vectors map[string][]float32) error
+}

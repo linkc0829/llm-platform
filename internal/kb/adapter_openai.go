@@ -9,18 +9,18 @@ import (
 	"github.com/openai/openai-go/option"
 )
 
-// OpenAIClient implements LLM. Phase 4 adds Embedder on the same adapter.
+// OpenAIClient implements LLM and Embedder.
 type OpenAIClient struct {
 	client     openai.Client
 	chatModel  openai.ChatModel
-	embedModel string
+	embedModel openai.EmbeddingModel
 }
 
 func NewOpenAIClient(apiKey string) *OpenAIClient {
 	return &OpenAIClient{
 		client:     openai.NewClient(option.WithAPIKey(apiKey)),
 		chatModel:  openai.ChatModelGPT4oMini,
-		embedModel: "text-embedding-3-small",
+		embedModel: openai.EmbeddingModelTextEmbedding3Small,
 	}
 }
 
@@ -46,6 +46,35 @@ func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Sect
 		return "", fmt.Errorf("openai chat: no choices returned")
 	}
 	return strings.TrimSpace(completion.Choices[0].Message.Content), nil
+}
+
+func (o *OpenAIClient) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	response, err := o.client.Embeddings.New(ctx, openai.EmbeddingNewParams{
+		Input: openai.EmbeddingNewParamsInputUnion{
+			OfArrayOfStrings: texts,
+		},
+		Model:          o.embedModel,
+		EncodingFormat: openai.EmbeddingNewParamsEncodingFormatFloat,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("openai embed: %w", err)
+	}
+
+	vectors := make([][]float32, len(response.Data))
+	for _, item := range response.Data {
+		if item.Index < 0 || int(item.Index) >= len(vectors) {
+			return nil, fmt.Errorf("openai embed: response index %d out of range", item.Index)
+		}
+		vec := make([]float32, len(item.Embedding))
+		for i, value := range item.Embedding {
+			vec[i] = float32(value)
+		}
+		vectors[item.Index] = vec
+	}
+	if len(vectors) != len(texts) {
+		return nil, fmt.Errorf("openai embed: got %d vectors, want %d", len(vectors), len(texts))
+	}
+	return vectors, nil
 }
 
 func groundedPrompt(query string, sections []Section) string {

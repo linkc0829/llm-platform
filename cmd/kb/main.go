@@ -30,14 +30,20 @@ func main() {
 	defer stop()
 
 	repo := kb.NewMarkdownRepo("docs", ".kb")
+	vecRepo := kb.NewVectorRepo(".kb")
 	var llm kb.LLM
+	var embedder kb.Embedder
 	if strings.EqualFold(cfg.OpenAI.LLMMode, "fake") {
 		lg.Warn("using fake LLM mode; responses are deterministic and do not call OpenAI")
-		llm = kb.NewFakeLLM()
+		fake := kb.NewFakeLLM()
+		llm = fake
+		embedder = fake
 	} else {
-		llm = kb.NewOpenAIClient(cfg.OpenAI.APIKey)
+		oai := kb.NewOpenAIClient(cfg.OpenAI.APIKey)
+		llm = oai
+		embedder = oai
 	}
-	svc := kb.NewService(repo, llm)
+	svc := kb.NewService(repo, llm, embedder, vecRepo)
 	if err := svc.LoadOnStartup(ctx); err != nil {
 		if errors.Is(err, kb.ErrNotIndexed) {
 			lg.Warn("knowledge base not indexed yet; POST /index to build it")
