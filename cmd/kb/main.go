@@ -29,8 +29,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	repo := kb.NewMarkdownRepo("docs", ".kb")
-	vecRepo := kb.NewVectorRepo(".kb")
+	repo := kb.NewMarkdownRepo(cfg.KB.DocsDir, cfg.KB.IndexDir)
+	vecRepo := kb.NewVectorRepo(cfg.KB.IndexDir)
 	sessions := kb.NewInProcStore()
 	var llm kb.LLM
 	var embedder kb.Embedder
@@ -40,17 +40,19 @@ func main() {
 		llm = fake
 		embedder = fake
 	} else {
-		oai := kb.NewOpenAIClient(cfg.OpenAI.APIKey)
+		oai := kb.NewOpenAIClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, cfg.OpenAI.ChatModel, cfg.OpenAI.EmbedModel)
 		llm = oai
 		embedder = oai
 	}
-	svc := kb.NewService(repo, llm, embedder, vecRepo, sessions)
+	svc := kb.NewService(repo, llm, embedder, vecRepo, sessions, cfg.OpenAI.EmbedModel)
 	if err := svc.LoadOnStartup(ctx); err != nil {
 		switch {
 		case errors.Is(err, kb.ErrNotIndexed):
 			lg.Warn("knowledge base not indexed yet; POST /index to build it")
 		case errors.Is(err, kb.ErrIndexStale):
 			lg.Warn("index is stale; POST /index to rebuild it")
+		case errors.Is(err, kb.ErrVectorsIgnored):
+			lg.Warn("vector index is stale; POST /index to rebuild it")
 		default:
 			lg.Sugar().Fatalf("load index: %v", err)
 		}

@@ -16,7 +16,6 @@ const (
 	strongThreshold = 1.7
 	minThreshold    = 1.2
 	topK            = 3
-	embeddingModel  = "text-embedding-3-small"
 )
 
 type sectionStore interface {
@@ -26,11 +25,12 @@ type sectionStore interface {
 }
 
 type Service struct {
-	sections sectionStore
-	llm      LLM
-	embedder Embedder
-	vectors  VectorStore
-	sessions SessionStore
+	sections   sectionStore
+	llm        LLM
+	embedder   Embedder
+	vectors    VectorStore
+	sessions   SessionStore
+	embedModel string
 
 	mu      sync.RWMutex
 	vecMap  map[string][]float32
@@ -39,8 +39,8 @@ type Service struct {
 	ready   bool
 }
 
-func NewService(sections sectionStore, llm LLM, embedder Embedder, vectors VectorStore, sessions SessionStore) *Service {
-	return &Service{sections: sections, llm: llm, embedder: embedder, vectors: vectors, sessions: sessions}
+func NewService(sections sectionStore, llm LLM, embedder Embedder, vectors VectorStore, sessions SessionStore, embedModel string) *Service {
+	return &Service{sections: sections, llm: llm, embedder: embedder, vectors: vectors, sessions: sessions, embedModel: embedModel}
 }
 
 func (s *Service) Index(ctx context.Context) (int, int, error) {
@@ -71,14 +71,23 @@ func (s *Service) LoadOnStartup(ctx context.Context) error {
 	}
 
 	vecMap := map[string][]float32{}
+	stale := false
 	if s.vectors != nil {
-		vecMap, err = s.vectors.Load(ctx)
+		model, loaded, err := s.vectors.Load(ctx)
 		if err != nil {
 			return fmt.Errorf("load vectors: %w", err)
+		}
+		if len(loaded) > 0 && model != s.embedModel {
+			stale = true
+		} else {
+			vecMap = loaded
 		}
 	}
 
 	s.storeIndexSnapshot(secs, BuildCorpus(secs), vecMap, true)
+	if stale {
+		return ErrVectorsIgnored
+	}
 	return nil
 }
 
@@ -156,7 +165,7 @@ func (s *Service) embedSections(ctx context.Context, secs []Section) (map[string
 	for i, sec := range secs {
 		vecMap[sec.Citation()] = embs[i]
 	}
-	if err := s.vectors.Save(ctx, embeddingModel, vecMap); err != nil {
+	if err := s.vectors.Save(ctx, s.embedModel, vecMap); err != nil {
 		return nil, fmt.Errorf("save vectors: %w", err)
 	}
 	return vecMap, nil

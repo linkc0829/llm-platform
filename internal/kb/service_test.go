@@ -72,6 +72,7 @@ func (f *fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, er
 }
 
 type fakeVectorStore struct {
+	loadModel   string
 	loadVectors map[string][]float32
 	loadErr     error
 	saveErr     error
@@ -79,8 +80,8 @@ type fakeVectorStore struct {
 	saved       map[string][]float32
 }
 
-func (f *fakeVectorStore) Load(_ context.Context) (map[string][]float32, error) {
-	return f.loadVectors, f.loadErr
+func (f *fakeVectorStore) Load(_ context.Context) (string, map[string][]float32, error) {
+	return f.loadModel, f.loadVectors, f.loadErr
 }
 
 func (f *fakeVectorStore) Save(_ context.Context, model string, vectors map[string][]float32) error {
@@ -97,7 +98,7 @@ func TestServiceIndexBuildsAndPersistsIndex(t *testing.T) {
 	store := &fakeSectionStore{parseSections: []Section{section}, parseFiles: 3}
 	embedder := &fakeEmbedder{vectors: map[string][]float32{section.Body(): {1, 0}}}
 	vectors := &fakeVectorStore{}
-	svc := NewService(store, nil, embedder, vectors, nil)
+	svc := NewService(store, nil, embedder, vectors, nil, "configured-model")
 
 	files, sections, err := svc.Index(context.Background())
 	if err != nil {
@@ -109,8 +110,8 @@ func TestServiceIndexBuildsAndPersistsIndex(t *testing.T) {
 	if len(store.saved) != 1 || store.saved[0].Citation() != section.Citation() {
 		t.Errorf("Service.Index() saved = %#v, want parsed section", store.saved)
 	}
-	if vectors.savedModel != embeddingModel || len(vectors.saved) != 1 {
-		t.Errorf("Service.Index() saved vectors model/count = %q/%d, want %q/1", vectors.savedModel, len(vectors.saved), embeddingModel)
+	if vectors.savedModel != "configured-model" || len(vectors.saved) != 1 {
+		t.Errorf("Service.Index() saved vectors model/count = %q/%d, want configured-model/1", vectors.savedModel, len(vectors.saved))
 	}
 	_, corpus, indexedVectors, ready := svc.indexSnapshot()
 	if !ready || corpus.N != 1 || len(indexedVectors) != 1 {
@@ -119,17 +120,36 @@ func TestServiceIndexBuildsAndPersistsIndex(t *testing.T) {
 }
 
 func TestServiceLoadOnStartupHandlesMissingIndex(t *testing.T) {
-	svc := NewService(&fakeSectionStore{loadErr: ErrNotIndexed}, nil, nil, nil, nil)
+	svc := NewService(&fakeSectionStore{loadErr: ErrNotIndexed}, nil, nil, nil, nil, "test-model")
 	err := svc.LoadOnStartup(context.Background())
 	if !errors.Is(err, ErrNotIndexed) {
 		t.Errorf("Service.LoadOnStartup() error = %v, want ErrNotIndexed", err)
 	}
 }
 
+func TestServiceLoadOnStartupIgnoresMismatchedVectorModel(t *testing.T) {
+	sections := mustSampleSections(t)
+	llm := &fakeLLM{answer: "answer"}
+	vectors := &fakeVectorStore{loadModel: "old-model", loadVectors: map[string][]float32{sections[0].Citation(): {1, 0}}}
+	svc := NewService(&fakeSectionStore{loadSections: sections}, llm, nil, vectors, NewInProcStore(), "new-model")
+
+	err := svc.LoadOnStartup(context.Background())
+	if !errors.Is(err, ErrVectorsIgnored) {
+		t.Fatalf("Service.LoadOnStartup() error = %v, want ErrVectorsIgnored", err)
+	}
+	answer, _, err := svc.Chat(context.Background(), "How long do refunds take?", "session")
+	if err != nil {
+		t.Fatalf("Service.Chat() error = %v, want nil", err)
+	}
+	if answer.Strategy() != "markdown" {
+		t.Errorf("Service.Chat() strategy = %q, want markdown", answer.Strategy())
+	}
+}
+
 func TestServiceConcurrentIndexAndChatUsesConsistentSnapshot(t *testing.T) {
 	sections := mustSampleSections(t)
 	store := &fakeSectionStore{parseSections: sections, parseFiles: 3}
-	svc := NewService(store, NewFakeLLM(), nil, nil, NewInProcStore())
+	svc := NewService(store, NewFakeLLM(), nil, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, true)
 
 	var wg sync.WaitGroup
@@ -213,7 +233,7 @@ func TestServiceChat(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			llm := &fakeLLM{answer: tt.wantAnswer}
-			svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore())
+			svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
 			svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, tt.ready)
 
 			answer, sessionID, err := svc.Chat(context.Background(), tt.query, "session-1")
@@ -259,7 +279,7 @@ func TestServiceChatWeakScoreUsesVectorRetrieval(t *testing.T) {
 	}
 	llm := &fakeLLM{answer: "vector answer"}
 	embedder := &fakeEmbedder{vectors: map[string][]float32{"weak weak": {0, 1}}}
-	svc := NewService(&fakeSectionStore{}, llm, embedder, nil, NewInProcStore())
+	svc := NewService(&fakeSectionStore{}, llm, embedder, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot([]Section{bm25Section, vectorSection}, Corpus{
 		DocTokens: [][]string{{"weak"}, {"other"}},
 		DocFreq:   map[string]int{"weak": 1, "other": 1},
@@ -291,7 +311,7 @@ func TestServiceChatWeakScoreUsesVectorRetrieval(t *testing.T) {
 func TestServiceChatGeneratesSessionID(t *testing.T) {
 	sections := mustSampleSections(t)
 	llm := &fakeLLM{answer: "Refunds are processed within 5-7 business days."}
-	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore())
+	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, true)
 
 	_, sessionID, err := svc.Chat(context.Background(), "How long do refunds take?", "")
@@ -306,7 +326,7 @@ func TestServiceChatGeneratesSessionID(t *testing.T) {
 func TestServiceChatUsesHistoryForFollowUpRetrieval(t *testing.T) {
 	sections := mustSampleSections(t)
 	llm := &fakeLLM{answer: "answer"}
-	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore())
+	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, true)
 
 	_, sessionID, err := svc.Chat(context.Background(), "How long do refunds take?", "")

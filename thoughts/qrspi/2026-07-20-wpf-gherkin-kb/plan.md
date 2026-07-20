@@ -272,8 +272,8 @@ Read the file into lines and split it into heading sections. In `flush()`:
 - [x] `TestMarkdownRepoParseSplitsDocsIntoSections` updated for empty-body filtering
 
 #### Manual
-- [ ] The 39 WPF replay Markdown files are under `docs/`; `POST /index` returns a plausible `sections` count
-- [ ] `POST /chat` returns a `sources` entry containing a WPF Markdown filename (e.g. `登入__00_動態密碼登入.md#登入-00_動態密碼登入`)
+- [x] The 39 WPF replay Markdown files are under `docs/`; `POST /index` returns a plausible `sections` count
+- [x] `POST /chat` returns a `sources` entry containing a WPF Markdown filename (e.g. `登入__00_動態密碼登入.md#登入-00_動態密碼登入`)
 
 ---
 
@@ -392,11 +392,11 @@ Relax the API-key rule (`:46`) and fix the case-sensitivity split against `main.
 ### Verification
 
 #### Automated
-- [ ] `make verify` passes
-- [ ] `TestLoadKBAllowsBaseURLWithoutAPIKey` in `config_test.go`, following the existing `unsetEnv` helper pattern
-- [ ] `TestLoadKBReadsEnvFileAliases` extended with one new variable
-- [ ] `TestServiceLoadOnStartupIgnoresMismatchedVectorModel` — `fakeVectorStore` returns model `"old-model"`, service configured with `"new-model"`; assert `errors.Is(err, ErrVectorsIgnored)`, and that a subsequent `Chat` still answers with `strategy == "markdown"`
-- [ ] Existing `TestServiceIndexBuildsAndPersistsIndex` updated — the `embeddingModel` assertion (`service_test.go:112-113`) now asserts the configured value
+- [x] `make verify` passes
+- [x] `TestLoadKBAllowsBaseURLWithoutAPIKey` in `config_test.go`, following the existing `unsetEnv` helper pattern
+- [x] `TestLoadKBReadsEnvFileAliases` extended with one new variable
+- [x] `TestServiceLoadOnStartupIgnoresMismatchedVectorModel` — `fakeVectorStore` returns model `"old-model"`, service configured with `"new-model"`; assert `errors.Is(err, ErrVectorsIgnored)`, and that a subsequent `Chat` still answers with `strategy == "markdown"`
+- [x] Existing `TestServiceIndexBuildsAndPersistsIndex` updated — the `embeddingModel` assertion (`service_test.go:112-113`) now asserts the configured value
 
 #### Manual
 - [ ] `ollama pull` the chosen chat + embed models; set `OPENAI_BASE_URL=http://localhost:11434/v1`, `KB_CHAT_MODEL`, `KB_EMBED_MODEL`; `rm -rf .kb`; `make run`; `POST /index` completes with **no OpenAI API key set**

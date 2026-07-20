@@ -16,11 +16,15 @@ type OpenAIClient struct {
 	embedModel openai.EmbeddingModel
 }
 
-func NewOpenAIClient(apiKey string) *OpenAIClient {
+func NewOpenAIClient(apiKey, baseURL, chatModel, embedModel string) *OpenAIClient {
+	opts := []option.RequestOption{option.WithAPIKey(apiKey)}
+	if baseURL != "" {
+		opts = append(opts, option.WithBaseURL(baseURL))
+	}
 	return &OpenAIClient{
-		client:     openai.NewClient(option.WithAPIKey(apiKey)),
-		chatModel:  openai.ChatModelGPT4oMini,
-		embedModel: openai.EmbeddingModelTextEmbedding3Small,
+		client:     openai.NewClient(opts...),
+		chatModel:  openai.ChatModel(chatModel),
+		embedModel: openai.EmbeddingModel(embedModel),
 	}
 }
 

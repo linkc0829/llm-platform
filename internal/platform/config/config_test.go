@@ -9,6 +9,7 @@ import (
 func TestLoadKBReadsEnvFileAliases(t *testing.T) {
 	unsetEnv(t, "OPENAI_API_KEY")
 	unsetEnv(t, "APP_PORT")
+	unsetEnv(t, "KB_CHAT_MODEL")
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -19,7 +20,7 @@ func TestLoadKBReadsEnvFileAliases(t *testing.T) {
 	}()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY='test-key'\nAPP_PORT=9090\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY='test-key'\nAPP_PORT=9090\nKB_CHAT_MODEL=test-model\n"), 0o600); err != nil {
 		t.Fatalf("write .env: %v", err)
 	}
 	if err := os.Chdir(dir); err != nil {
@@ -35,6 +36,37 @@ func TestLoadKBReadsEnvFileAliases(t *testing.T) {
 	}
 	if cfg.HTTP.Port != 9090 {
 		t.Fatalf("HTTP port = %d, want 9090", cfg.HTTP.Port)
+	}
+	if cfg.OpenAI.ChatModel != "test-model" {
+		t.Fatalf("OpenAI chat model = %q, want test-model", cfg.OpenAI.ChatModel)
+	}
+}
+
+func TestLoadKBAllowsBaseURLWithoutAPIKey(t *testing.T) {
+	unsetEnv(t, "OPENAI_API_KEY")
+	unsetEnv(t, "KB_LLM_MODE")
+	unsetEnv(t, "OPENAI_BASE_URL")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_BASE_URL=http://localhost:11434/v1\n"), 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	cfg, err := LoadKB()
+	if err != nil {
+		t.Fatalf("LoadKB() error = %v, want nil", err)
+	}
+	if cfg.OpenAI.BaseURL != "http://localhost:11434/v1" {
+		t.Errorf("OpenAI base URL = %q, want Ollama URL", cfg.OpenAI.BaseURL)
 	}
 }
 

@@ -12,7 +12,7 @@ type Embedder interface {
 }
 
 type VectorStore interface {
-	Load(ctx context.Context) (map[string][]float32, error)
+	Load(ctx context.Context) (string, map[string][]float32, error)
 	Save(ctx context.Context, model string, vectors map[string][]float32) error
 }
 
