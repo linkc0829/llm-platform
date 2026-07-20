@@ -13,7 +13,7 @@ import (
 // It grows as endpoints are added in later phases.
 type service interface {
 	Index(ctx context.Context) (filesIndexed, sectionsIndexed int, err error)
-	Chat(ctx context.Context, query, sessionID string) (Answer, string, error)
+	ChatWithMetrics(ctx context.Context, query, sessionID string) (Answer, string, RetrievalMetrics, error)
 }
 
 type Handler struct {
@@ -50,12 +50,12 @@ func (h *Handler) chat(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
-	answer, sessionID, err := h.svc.Chat(ctx, req.Query, req.SessionID)
+	answer, sessionID, metrics, err := h.svc.ChatWithMetrics(ctx, req.Query, req.SessionID)
 	if err != nil {
 		writeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, toChatResponse(answer, sessionID))
+	c.JSON(http.StatusOK, toChatResponse(answer, sessionID, metrics))
 }
 
 func writeError(c *gin.Context, err error) {

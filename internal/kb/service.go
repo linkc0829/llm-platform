@@ -40,6 +40,11 @@ type Service struct {
 	ready   bool
 }
 
+type RetrievalMetrics struct {
+	BM25Max    float64
+	BestCosine float64
+}
+
 func NewService(sections sectionStore, llm LLM, embedder Embedder, vectors VectorStore, sessions SessionStore, embedModel string) *Service {
 	return &Service{sections: sections, llm: llm, embedder: embedder, vectors: vectors, sessions: sessions, embedModel: embedModel}
 }
@@ -93,8 +98,17 @@ func (s *Service) LoadOnStartup(ctx context.Context) error {
 }
 
 func (s *Service) Chat(ctx context.Context, query, sessionID string) (Answer, string, error) {
+	answer, sessionID, _, err := s.chat(ctx, query, sessionID)
+	return answer, sessionID, err
+}
+
+func (s *Service) ChatWithMetrics(ctx context.Context, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
+	return s.chat(ctx, query, sessionID)
+}
+
+func (s *Service) chat(ctx context.Context, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
 	if strings.TrimSpace(query) == "" {
-		return Answer{}, sessionID, ErrEmptyQuery
+		return Answer{}, sessionID, RetrievalMetrics{}, ErrEmptyQuery
 	}
 	if sessionID == "" {
 		sessionID = uuid.NewString()
@@ -102,7 +116,7 @@ func (s *Service) Chat(ctx context.Context, query, sessionID string) (Answer, st
 
 	indexed, corpus, vecMap, ready := s.indexSnapshot()
 	if !ready {
-		return Answer{}, sessionID, ErrNotIndexed
+		return Answer{}, sessionID, RetrievalMetrics{}, ErrNotIndexed
 	}
 
 	history := s.history(ctx, sessionID)
@@ -129,7 +143,8 @@ func (s *Service) Chat(ctx context.Context, query, sessionID string) (Answer, st
 		bestCosine = vecList[0].Score
 	}
 	if bm25Max < minThreshold && bestCosine < cosineMin {
-		return s.deny(ctx, sessionID, query)
+		answer, sessionID, err := s.deny(ctx, sessionID, query)
+		return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
 	}
 	ranked, strategy := bm25List, "markdown"
 	if len(vecList) > 0 && len(bm25List) > 0 {
@@ -139,9 +154,11 @@ func (s *Service) Chat(ctx context.Context, query, sessionID string) (Answer, st
 	}
 	sections := topSections(indexed, ranked, topK)
 	if len(sections) == 0 {
-		return s.deny(ctx, sessionID, query)
+		answer, sessionID, err := s.deny(ctx, sessionID, query)
+		return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
 	}
-	return s.answerFrom(ctx, sessionID, query, sections, history, strategy)
+	answer, sessionID, err := s.answerFrom(ctx, sessionID, query, sections, history, strategy)
+	return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
 }
 
 // deny records the turn and returns the cannot-confirm answer.
