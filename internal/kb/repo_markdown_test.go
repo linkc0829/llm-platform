@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -109,8 +110,8 @@ func TestMarkdownRepoParseExtractsWPFMetadataAndImages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarkdownRepo.Parse() error = %v, want nil", err)
 	}
-	if len(sections) != 2 {
-		t.Fatalf("MarkdownRepo.Parse() sections = %d, want 2", len(sections))
+	if len(sections) != 1 {
+		t.Fatalf("MarkdownRepo.Parse() sections = %d, want 1", len(sections))
 	}
 	if sections[0].Meta()["功能區"] != "登入" || sections[0].Meta()["到達路徑"] != "start" {
 		t.Errorf("MarkdownRepo.Parse() metadata = %#v, want WPF metadata", sections[0].Meta())
@@ -118,6 +119,9 @@ func TestMarkdownRepoParseExtractsWPFMetadataAndImages(t *testing.T) {
 	wantImage := "../screenshots/登入/00_動態密碼登入.png"
 	if len(sections[0].Images()) != 1 || sections[0].Images()[0] != wantImage {
 		t.Errorf("MarkdownRepo.Parse() images = %#v, want %#v", sections[0].Images(), []string{wantImage})
+	}
+	if !strings.Contains(sections[0].Body(), "## 操作") || !strings.Contains(sections[0].Body(), "輸入動態密碼") {
+		t.Errorf("MarkdownRepo.Parse() body = %q, want complete WPF flow", sections[0].Body())
 	}
 }
 

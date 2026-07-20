@@ -123,6 +123,7 @@ func parseMarkdownFile(path, relName string) ([]Section, error) {
 	sections := make([]Section, 0)
 	var heading string
 	var body strings.Builder
+	wpfFlow := false
 
 	flush := func() error {
 		if heading == "" {
@@ -146,10 +147,16 @@ func parseMarkdownFile(path, relName string) ([]Section, error) {
 	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSuffix(line, "\r")
 		if match := headingRE.FindStringSubmatch(line); match != nil {
+			if wpfFlow {
+				body.WriteString(line)
+				body.WriteByte('\n')
+				continue
+			}
 			if err := flush(); err != nil {
 				return nil, err
 			}
 			heading = strings.TrimSpace(match[2])
+			wpfFlow = strings.Contains(heading, "/")
 			continue
 		}
 		if heading != "" {
