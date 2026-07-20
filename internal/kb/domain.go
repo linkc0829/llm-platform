@@ -2,10 +2,12 @@ package kb
 
 import (
 	"math"
-	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 )
+
+const anchorVersion = 1
 
 type Section struct {
 	file    string
@@ -34,25 +36,71 @@ func (s Section) Citation() string {
 	return s.file + "#" + s.anchor
 }
 
-var nonSlug = regexp.MustCompile(`[^a-z0-9 -]`)
-
 func slugify(h string) string {
-	s := strings.ToLower(strings.TrimSpace(h))
-	s = nonSlug.ReplaceAllString(s, "")
-	s = strings.ReplaceAll(s, " ", "-")
-	return s
+	var b strings.Builder
+	prevDash := false
+	for _, r := range strings.TrimSpace(h) {
+		switch {
+		case isASCIIAlnum(r):
+			b.WriteRune(unicode.ToLower(r))
+			prevDash = false
+		case isCJK(r):
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
-var tokenSplit = regexp.MustCompile(`[^a-z0-9]+`)
-
 func tokenize(text string) []string {
-	text = strings.ToLower(text)
-	parts := tokenSplit.Split(text, -1)
-	out := parts[:0]
-	for _, p := range parts {
-		if p != "" {
-			out = append(out, p)
+	runes := []rune(text)
+	out := make([]string, 0, len(runes))
+	for i := 0; i < len(runes); {
+		switch {
+		case isASCIIAlnum(runes[i]):
+			j := i
+			for j < len(runes) && isASCIIAlnum(runes[j]) {
+				j++
+			}
+			out = append(out, strings.ToLower(string(runes[i:j])))
+			i = j
+		case isCJK(runes[i]):
+			j := i
+			for j < len(runes) && isCJK(runes[j]) {
+				j++
+			}
+			out = append(out, bigrams(runes[i:j])...)
+			i = j
+		default:
+			i++
 		}
+	}
+	return out
+}
+
+func isASCIIAlnum(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+}
+
+func isCJK(r rune) bool {
+	return unicode.Is(unicode.Han, r) ||
+		unicode.Is(unicode.Hiragana, r) ||
+		unicode.Is(unicode.Katakana, r) ||
+		unicode.Is(unicode.Hangul, r)
+}
+
+func bigrams(run []rune) []string {
+	if len(run) == 1 {
+		return []string{string(run)}
+	}
+	out := make([]string, 0, len(run)-1)
+	for i := 0; i+1 < len(run); i++ {
+		out = append(out, string(run[i:i+2]))
 	}
 	return out
 }

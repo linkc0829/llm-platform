@@ -46,9 +46,12 @@ func main() {
 	}
 	svc := kb.NewService(repo, llm, embedder, vecRepo, sessions)
 	if err := svc.LoadOnStartup(ctx); err != nil {
-		if errors.Is(err, kb.ErrNotIndexed) {
+		switch {
+		case errors.Is(err, kb.ErrNotIndexed):
 			lg.Warn("knowledge base not indexed yet; POST /index to build it")
-		} else {
+		case errors.Is(err, kb.ErrIndexStale):
+			lg.Warn("index is stale; POST /index to rebuild it")
+		default:
 			lg.Sugar().Fatalf("load index: %v", err)
 		}
 	}

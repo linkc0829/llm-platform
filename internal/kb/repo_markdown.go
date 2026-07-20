@@ -47,8 +47,9 @@ func (r *MarkdownRepo) Save(ctx context.Context, sections []Section) error {
 	}
 
 	out := indexJSON{
-		Sections: make([]sectionJSON, 0, len(sections)),
-		Corpus:   toCorpusJSON(BuildCorpus(sections)),
+		AnchorVersion: anchorVersion,
+		Sections:      make([]sectionJSON, 0, len(sections)),
+		Corpus:        toCorpusJSON(BuildCorpus(sections)),
 	}
 	for _, section := range sections {
 		out.Sections = append(out.Sections, toSectionJSON(section))
@@ -83,6 +84,9 @@ func (r *MarkdownRepo) Load(ctx context.Context) ([]Section, error) {
 	var in indexJSON
 	if err := json.Unmarshal(b, &in); err != nil {
 		return nil, fmt.Errorf("unmarshal index: %w", err)
+	}
+	if in.AnchorVersion != anchorVersion {
+		return nil, ErrIndexStale
 	}
 	sections := make([]Section, 0, len(in.Sections))
 	for _, section := range in.Sections {

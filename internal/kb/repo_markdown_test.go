@@ -84,6 +84,20 @@ func TestMarkdownRepoLoadMissingIndexReturnsErrNotIndexed(t *testing.T) {
 	}
 }
 
+func TestMarkdownRepoLoadStaleAnchorVersionReturnsErrIndexStale(t *testing.T) {
+	indexDir := filepath.Join(t.TempDir(), ".kb")
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v, want nil", indexDir, err)
+	}
+	writeTestFile(t, filepath.Join(indexDir, "index.json"), `{"anchor_version":0,"sections":[],"corpus":{}}`)
+	repo := NewMarkdownRepo(t.TempDir(), indexDir)
+
+	_, err := repo.Load(context.Background())
+	if !errors.Is(err, ErrIndexStale) {
+		t.Errorf("MarkdownRepo.Load() error = %v, want ErrIndexStale", err)
+	}
+}
+
 func writeTestFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {

@@ -8,8 +8,9 @@ type sectionJSON struct {
 }
 
 type indexJSON struct {
-	Sections []sectionJSON `json:"sections"`
-	Corpus   corpusJSON    `json:"corpus"`
+	AnchorVersion int           `json:"anchor_version"`
+	Sections      []sectionJSON `json:"sections"`
+	Corpus        corpusJSON    `json:"corpus"`
 }
 
 type corpusJSON struct {

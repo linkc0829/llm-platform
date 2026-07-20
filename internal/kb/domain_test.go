@@ -2,6 +2,7 @@ package kb
 
 import (
 	"math"
+	"reflect"
 	"testing"
 )
 
@@ -13,6 +14,10 @@ func TestSlugify(t *testing.T) {
 	}{
 		{name: "spaces_to_hyphens", heading: "Refund Timeline", want: "refund-timeline"},
 		{name: "strips_punctuation", heading: "Change Email Address!", want: "change-email-address"},
+		{name: "cjk_preserved", heading: "動態密碼", want: "動態密碼"},
+		{name: "cjk_with_punctuation", heading: "Scenario: 登入 完整操作劇本", want: "scenario-登入-完整操作劇本"},
+		{name: "collapses_runs", heading: "Change -- Email", want: "change-email"},
+		{name: "trims_edges", heading: " !! Change Email ?? ", want: "change-email"},
 	}
 
 	for _, tt := range tests {
@@ -26,17 +31,25 @@ func TestSlugify(t *testing.T) {
 }
 
 func TestTokenize(t *testing.T) {
-	input := "Refunds: 5-7 business days. Final-sale items!"
-	want := []string{"refunds", "5", "7", "business", "days", "final", "sale", "items"}
-
-	got := tokenize(input)
-	if len(got) != len(want) {
-		t.Fatalf("tokenize(%q) length = %d, want %d; got %#v", input, len(got), len(want), got)
+	tests := []struct {
+		name string
+		text string
+		want []string
+	}{
+		{name: "pure_cjk", text: "動態密碼", want: []string{"動態", "態密", "密碼"}},
+		{name: "single_cjk_char", text: "密", want: []string{"密"}},
+		{name: "mixed_cjk_ascii", text: "動態 LoginViewModel", want: []string{"動態", "loginviewmodel"}},
+		{name: "ascii_only", text: "Refunds: 5-7 business days. Final-sale items!", want: []string{"refunds", "5", "7", "business", "days", "final", "sale", "items"}},
+		{name: "punctuation_only", text: "!?-", want: []string{}},
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("tokenize(%q)[%d] = %q, want %q", input, i, got[i], want[i])
-		}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tokenize(tt.text)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("tokenize(%q) = %#v, want %#v", tt.text, got, tt.want)
+			}
+		})
 	}
 }
 

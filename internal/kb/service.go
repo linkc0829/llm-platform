@@ -63,8 +63,8 @@ func (s *Service) Index(ctx context.Context) (int, int, error) {
 
 func (s *Service) LoadOnStartup(ctx context.Context) error {
 	secs, err := s.sections.Load(ctx)
-	if errors.Is(err, ErrNotIndexed) {
-		return ErrNotIndexed
+	if errors.Is(err, ErrNotIndexed) || errors.Is(err, ErrIndexStale) {
+		return err
 	}
 	if err != nil {
 		return fmt.Errorf("load index: %w", err)
