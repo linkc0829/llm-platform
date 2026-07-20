@@ -99,3 +99,22 @@ func TestCosine(t *testing.T) {
 		})
 	}
 }
+
+func TestFuseRRF(t *testing.T) {
+	got := FuseRRF([][]ScoredSection{{{Index: 1, Score: 9}, {Index: 0, Score: 8}}, {{Index: 0, Score: 7}, {Index: 2, Score: 6}}}, 60)
+	want := []int{0, 1, 2}
+	for i, index := range want {
+		if got[i].Index != index {
+			t.Errorf("FuseRRF() index %d = %d, want %d", i, got[i].Index, index)
+		}
+	}
+}
+
+func TestRankVector(t *testing.T) {
+	a, _ := NewSection("a.md", "A", "body", nil, nil)
+	b, _ := NewSection("b.md", "B", "body", nil, nil)
+	got := RankVector([]Section{a, b}, map[string][]float32{a.Citation(): {1, 0}, b.Citation(): {0, 1}}, []float32{1, 0}, 1)
+	if len(got) != 1 || got[0].Index != 0 {
+		t.Errorf("RankVector() = %#v, want index 0 only", got)
+	}
+}

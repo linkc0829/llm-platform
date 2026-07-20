@@ -238,3 +238,43 @@ func (c Corpus) RankBM25(queryTokens []string) []ScoredSection {
 	})
 	return ranked
 }
+
+func RankVector(indexed []Section, vecMap map[string][]float32, query []float32, limit int) []ScoredSection {
+	ranked := make([]ScoredSection, 0, len(indexed))
+	for i, section := range indexed {
+		score := Cosine(query, vecMap[section.Citation()])
+		if score > 0 {
+			ranked = append(ranked, ScoredSection{Index: i, Score: score})
+		}
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].Score == ranked[j].Score {
+			return ranked[i].Index < ranked[j].Index
+		}
+		return ranked[i].Score > ranked[j].Score
+	})
+	if limit < len(ranked) {
+		ranked = ranked[:limit]
+	}
+	return ranked
+}
+
+func FuseRRF(lists [][]ScoredSection, rrfK int) []ScoredSection {
+	acc := map[int]float64{}
+	for _, list := range lists {
+		for rank, scored := range list {
+			acc[scored.Index] += 1 / float64(rrfK+rank+1)
+		}
+	}
+	fused := make([]ScoredSection, 0, len(acc))
+	for index, score := range acc {
+		fused = append(fused, ScoredSection{Index: index, Score: score})
+	}
+	sort.Slice(fused, func(i, j int) bool {
+		if fused[i].Score == fused[j].Score {
+			return fused[i].Index < fused[j].Index
+		}
+		return fused[i].Score > fused[j].Score
+	})
+	return fused
+}

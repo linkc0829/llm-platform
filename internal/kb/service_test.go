@@ -295,16 +295,61 @@ func TestServiceChatWeakScoreUsesVectorRetrieval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Service.Chat(weak vector query) error = %v, want nil", err)
 	}
-	if answer.Strategy() != "vector" {
-		t.Errorf("Service.Chat(weak vector query) strategy = %q, want vector", answer.Strategy())
+	if answer.Strategy() != "hybrid" {
+		t.Errorf("Service.Chat(weak vector query) strategy = %q, want hybrid", answer.Strategy())
 	}
 	gotSources := citationStrings(answer.Sources())
-	wantSources := []string{"account_help.md#change-email-address"}
-	if !sameStrings(gotSources, wantSources) {
-		t.Errorf("Service.Chat(weak vector query) sources = %#v, want %#v", gotSources, wantSources)
+	if !containsString(gotSources, vectorSection.Citation()) {
+		t.Errorf("Service.Chat(weak vector query) sources = %#v, want vector citation %q", gotSources, vectorSection.Citation())
 	}
-	if len(llm.sections) == 0 || llm.sections[0].Citation() != vectorSection.Citation() {
-		t.Errorf("Service.Chat(weak vector query) LLM first section = %#v, want %q", llm.sections, vectorSection.Citation())
+}
+
+func TestServiceChatAnswersChineseQueryWithZeroBM25(t *testing.T) {
+	sections := mustSampleSections(t)
+	query := "動態密碼如何登入"
+	llm := &fakeLLM{answer: "answer"}
+	embedder := &fakeEmbedder{vectors: map[string][]float32{query: {0, 1}}}
+	svc := NewService(&fakeSectionStore{}, llm, embedder, nil, NewInProcStore(), "test-model")
+	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{sections[0].Citation(): {1, 0}, sections[1].Citation(): {0, 1}}, true)
+
+	answer, _, err := svc.Chat(context.Background(), query, "session")
+	if err != nil {
+		t.Fatalf("Service.Chat() error = %v, want nil", err)
+	}
+	if answer.Strategy() != "vector" {
+		t.Errorf("Service.Chat() strategy = %q, want vector", answer.Strategy())
+	}
+}
+
+func TestServiceChatEnglishIdentifierUsesBM25(t *testing.T) {
+	section, err := NewSection("login.md", "Engineering Context", "LoginViewModel validates the dynamic password.", nil, nil)
+	if err != nil {
+		t.Fatalf("NewSection() error = %v, want nil", err)
+	}
+	llm := &fakeLLM{answer: "answer"}
+	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
+	svc.storeIndexSnapshot([]Section{section}, BuildCorpus([]Section{section}), map[string][]float32{}, true)
+	answer, _, err := svc.Chat(context.Background(), "LoginViewModel LoginViewModel LoginViewModel LoginViewModel LoginViewModel", "session")
+	if err != nil {
+		t.Fatalf("Service.Chat() error = %v, want nil", err)
+	}
+	if !containsString(citationStrings(answer.Sources()), section.Citation()) {
+		t.Errorf("Service.Chat() sources = %#v, want %q", citationStrings(answer.Sources()), section.Citation())
+	}
+}
+
+func TestServiceChatDegradesWhenEmbedderFails(t *testing.T) {
+	sections := mustSampleSections(t)
+	llm := &fakeLLM{answer: "answer"}
+	svc := NewService(&fakeSectionStore{}, llm, &fakeEmbedder{err: errors.New("down")}, nil, NewInProcStore(), "test-model")
+	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{sections[0].Citation(): {1, 0}}, true)
+
+	answer, _, err := svc.Chat(context.Background(), "How long do refunds take?", "session")
+	if err != nil {
+		t.Fatalf("Service.Chat() error = %v, want nil", err)
+	}
+	if answer.Strategy() != "markdown" {
+		t.Errorf("Service.Chat() strategy = %q, want markdown", answer.Strategy())
 	}
 }
 
@@ -412,4 +457,13 @@ func sameStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

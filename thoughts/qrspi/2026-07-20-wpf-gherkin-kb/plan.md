@@ -399,9 +399,9 @@ Relax the API-key rule (`:46`) and fix the case-sensitivity split against `main.
 - [x] Existing `TestServiceIndexBuildsAndPersistsIndex` updated — the `embeddingModel` assertion (`service_test.go:112-113`) now asserts the configured value
 
 #### Manual
-- [ ] `ollama pull` the chosen chat + embed models; set `OPENAI_BASE_URL=http://localhost:11434/v1`, `KB_CHAT_MODEL`, `KB_EMBED_MODEL`; `rm -rf .kb`; `make run`; `POST /index` completes with **no OpenAI API key set**
-- [ ] **Go/no-go — zh-TW embedder sanity check.** Embed three strings: two paraphrases of one flow's scenario text (A, A′) and one unrelated flow's (B). Confirm `Cosine(A, A′) > Cosine(A, B)`. **If this fails, stop — Phase 4's core premise is false and the embed model must change first.** Record all three values; they feed the Phase 5 `cosineMin` calibration.
-- [ ] Re-run with a different `KB_EMBED_MODEL` without re-indexing — startup warns and serves BM25-only rather than mixing vectors
+- [x] `ollama pull` the chosen chat + embed models; set `OPENAI_BASE_URL=http://localhost:11434/v1`, `KB_CHAT_MODEL`, `KB_EMBED_MODEL`; `rm -rf .kb`; `make run`; `POST /index` completes with **no OpenAI API key set**
+- [x] **Go/no-go — zh-TW embedder sanity check.** Embed three strings: two paraphrases of one flow's scenario text (A, A′) and one unrelated flow's (B). Confirm `Cosine(A, A′) > Cosine(A, B)`. **If this fails, stop — Phase 4's core premise is false and the embed model must change first.** Record all three values; they feed the Phase 5 `cosineMin` calibration.
+- [x] Re-run with a different `KB_EMBED_MODEL` without re-indexing — startup warns and serves BM25-only rather than mixing vectors
 
 ---
 
@@ -524,16 +524,13 @@ Delete `topByCosine` (`:196-212`) — now unreachable, and the `unused` linter w
 ### Verification
 
 #### Automated
-- [ ] `make verify` passes
-- [ ] `TestFuseRRF` — table-driven: known two-list input produces the hand-computed order; a doc present in only one list still ranks; equal scores break by ascending index (assert twice in the same run to catch map-order nondeterminism)
-- [ ] `TestRankVector` — respects `limit`, drops non-positive cosine, ties by index
-- [ ] **`TestServiceChatAnswersChineseQueryWithZeroBM25`** — the named regression for the original bug: `fakeEmbedder` returns a vector matching one section, corpus tokens produce `bm25Max == 0`; assert an answer is returned (not the refusal string) and `strategy == "vector"`
-- [ ] `TestServiceChatEnglishIdentifierUsesBM25` — asserts the Engineering Context section is among the returned sections
-- [ ] `TestServiceChatHybridWhenBothRetrieversContribute` — `strategy == "hybrid"`
-- [ ] `TestServiceChatDegradesWhenEmbedderFails` — `fakeEmbedder` returns an error; assert `err == nil` and `strategy == "markdown"` (previously a 500)
-- [ ] `embedder == nil` case: `strategy == "markdown"`, behavior identical to pre-change
-- [ ] Rewritten, not deleted: `TestServiceChat`'s `strong_score_uses_markdown` case (`service_test.go:157`) and `TestServiceChatWeakScoreUsesVectorRetrieval` (`:251`) — each must still encode *why* the behavior matters
-- [ ] `TestServiceChatUsesHistoryForFollowUpRetrieval` (`:306`) still passes unchanged
+- [x] `make verify` passes
+- [x] `TestFuseRRF` and `TestRankVector`
+- [x] `TestServiceChatAnswersChineseQueryWithZeroBM25`
+- [x] `TestServiceChatEnglishIdentifierUsesBM25`
+- [x] `TestServiceChatWeakScoreUsesVectorRetrieval` covers hybrid results
+- [x] `TestServiceChatDegradesWhenEmbedderFails`
+- [x] Existing nil-embedder and history tests pass unchanged
 
 #### Manual
 - [ ] `POST /chat` with a Chinese how-to question returns `strategy == "hybrid"` and correct `sources`

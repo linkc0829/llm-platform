@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 
@@ -13,9 +12,11 @@ import (
 
 const (
 	// Thresholds are empirical for the sample docs; see the QRSPI plan calibration note.
-	strongThreshold = 1.7
-	minThreshold    = 1.2
-	topK            = 3
+	minThreshold = 1.2
+	topK         = 3
+	candidateK   = 20
+	rrfK         = 60
+	cosineMin    = 0.30
 )
 
 type sectionStore interface {
@@ -106,28 +107,41 @@ func (s *Service) Chat(ctx context.Context, query, sessionID string) (Answer, st
 
 	history := s.history(ctx, sessionID)
 	contextualQuery := composeQuery(history, query)
-	ranked := corpus.RankBM25(tokenize(contextualQuery))
-	if len(ranked) == 0 || ranked[0].Score < minThreshold {
+	bm25List := corpus.RankBM25(tokenize(contextualQuery))
+	for len(bm25List) > 0 && bm25List[len(bm25List)-1].Score <= 0 {
+		bm25List = bm25List[:len(bm25List)-1]
+	}
+	if len(bm25List) > candidateK {
+		bm25List = bm25List[:candidateK]
+	}
+	bm25Max := 0.0
+	if len(bm25List) > 0 {
+		bm25Max = bm25List[0].Score
+	}
+	var vecList []ScoredSection
+	if s.embedder != nil && len(vecMap) > 0 {
+		if vectors, err := s.embedder.Embed(ctx, []string{contextualQuery}); err == nil && len(vectors) > 0 {
+			vecList = RankVector(indexed, vecMap, vectors[0], candidateK)
+		}
+	}
+	bestCosine := 0.0
+	if len(vecList) > 0 {
+		bestCosine = vecList[0].Score
+	}
+	if bm25Max < minThreshold && bestCosine < cosineMin {
 		return s.deny(ctx, sessionID, query)
 	}
-
-	if ranked[0].Score >= strongThreshold || len(vecMap) == 0 || s.embedder == nil {
-		return s.answerFrom(ctx, sessionID, query, topSections(indexed, ranked, topK), history, "markdown")
+	ranked, strategy := bm25List, "markdown"
+	if len(vecList) > 0 && len(bm25List) > 0 {
+		ranked, strategy = FuseRRF([][]ScoredSection{bm25List, vecList}, rrfK), "hybrid"
+	} else if len(vecList) > 0 {
+		ranked, strategy = vecList, "vector"
 	}
-
-	queryVectors, err := s.embedder.Embed(ctx, []string{contextualQuery})
-	if err != nil {
-		return Answer{}, sessionID, fmt.Errorf("embed query: %w", err)
-	}
-	if len(queryVectors) == 0 {
-		return s.deny(ctx, sessionID, query)
-	}
-
-	sections := topByCosine(indexed, vecMap, queryVectors[0], topK)
+	sections := topSections(indexed, ranked, topK)
 	if len(sections) == 0 {
 		return s.deny(ctx, sessionID, query)
 	}
-	return s.answerFrom(ctx, sessionID, query, sections, history, "vector")
+	return s.answerFrom(ctx, sessionID, query, sections, history, strategy)
 }
 
 // deny records the turn and returns the cannot-confirm answer.
@@ -200,24 +214,6 @@ func topSections(indexed []Section, ranked []ScoredSection, k int) []Section {
 		}
 	}
 	return sections
-}
-
-func topByCosine(indexed []Section, vecMap map[string][]float32, queryVec []float32, k int) []Section {
-	ranked := make([]ScoredSection, 0, len(indexed))
-	for i, section := range indexed {
-		score := Cosine(queryVec, vecMap[section.Citation()])
-		if score <= 0 {
-			continue
-		}
-		ranked = append(ranked, ScoredSection{Index: i, Score: score})
-	}
-	sort.Slice(ranked, func(i, j int) bool {
-		if ranked[i].Score == ranked[j].Score {
-			return ranked[i].Index < ranked[j].Index
-		}
-		return ranked[i].Score > ranked[j].Score
-	})
-	return topSections(indexed, ranked, k)
 }
 
 func (s *Service) cannotConfirm() Answer {
