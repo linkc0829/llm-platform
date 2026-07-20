@@ -1,10 +1,12 @@
 package kb
 
 type sectionJSON struct {
-	File    string `json:"file"`
-	Heading string `json:"heading"`
-	Anchor  string `json:"anchor"`
-	Body    string `json:"body"`
+	File    string            `json:"file"`
+	Heading string            `json:"heading"`
+	Anchor  string            `json:"anchor"`
+	Body    string            `json:"body"`
+	Meta    map[string]string `json:"meta,omitempty"`
+	Images  []string          `json:"images,omitempty"`
 }
 
 type indexJSON struct {
@@ -26,11 +28,11 @@ type vectorMetaJSON struct {
 }
 
 func toSectionJSON(s Section) sectionJSON {
-	return sectionJSON{File: s.File(), Heading: s.Heading(), Anchor: s.Anchor(), Body: s.Body()}
+	return sectionJSON{File: s.File(), Heading: s.Heading(), Anchor: s.Anchor(), Body: s.Body(), Meta: s.Meta(), Images: s.Images()}
 }
 
 func fromSectionJSON(j sectionJSON) Section {
-	return rehydrateSection(j.File, j.Heading, j.Anchor, j.Body)
+	return rehydrateSection(j.File, j.Heading, j.Anchor, j.Body, j.Meta, j.Images)
 }
 
 func toCorpusJSON(c Corpus) corpusJSON {

@@ -90,7 +90,7 @@ func (f *fakeVectorStore) Save(_ context.Context, model string, vectors map[stri
 }
 
 func TestServiceIndexBuildsAndPersistsIndex(t *testing.T) {
-	section, err := NewSection("refund_policy.md", "Refund Timeline", "Refunds take 5-7 business days.")
+	section, err := NewSection("refund_policy.md", "Refund Timeline", "Refunds take 5-7 business days.", nil, nil)
 	if err != nil {
 		t.Fatalf("NewSection() error = %v, want nil", err)
 	}
@@ -249,11 +249,11 @@ func TestServiceChat(t *testing.T) {
 }
 
 func TestServiceChatWeakScoreUsesVectorRetrieval(t *testing.T) {
-	bm25Section, err := NewSection("refund_policy.md", "Refund Timeline", "weak body")
+	bm25Section, err := NewSection("refund_policy.md", "Refund Timeline", "weak body", nil, nil)
 	if err != nil {
 		t.Fatalf("NewSection(bm25Section) error = %v, want nil", err)
 	}
-	vectorSection, err := NewSection("account_help.md", "Change Email Address", "nearest vector body")
+	vectorSection, err := NewSection("account_help.md", "Change Email Address", "nearest vector body", nil, nil)
 	if err != nil {
 		t.Fatalf("NewSection(vectorSection) error = %v, want nil", err)
 	}
@@ -365,7 +365,7 @@ func mustSampleSections(t *testing.T) []Section {
 
 	sections := make([]Section, 0, len(specs))
 	for _, spec := range specs {
-		section, err := NewSection(spec.file, spec.heading, spec.body)
+		section, err := NewSection(spec.file, spec.heading, spec.body, nil, nil)
 		if err != nil {
 			t.Fatalf("NewSection(%q, %q) error = %v, want nil", spec.file, spec.heading, err)
 		}

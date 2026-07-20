@@ -2,7 +2,7 @@
 
 ## Overview
 
-Make Chinese questions retrievable and answerable against the real 9-folder WPF Gherkin flow bundle, using rank-fused BM25 + vector retrieval over a local Ollama. Four vertical phases plus an acceptance checkpoint.
+Make Chinese questions retrievable and answerable against the real flat WPF replay Markdown bundle, using rank-fused BM25 + vector retrieval over a local Ollama. Four vertical phases plus an acceptance checkpoint.
 
 **Commands**: `make verify` (= `golangci-lint run ./...` then `go test -race -short -count=1 ./...`), `make test`, `make lint`, `make run`.
 
@@ -149,12 +149,12 @@ ErrIndexStale = errors.New("index was built with an older anchor scheme; re-run 
 - [x] Existing `TestMarkdownRepoSaveLoadRoundTrip` still passes (Save now stamps, Load now checks)
 
 #### Manual
-- [ ] `rm -rf .kb` then `KB_LLM_MODE=fake make run`; `POST /index`; `POST /chat` with a Chinese question against `docs/*.md` — response is no longer `"I cannot confirm that from the knowledge base."`
-- [ ] Hand-edit `.kb/index.json` to `"anchor_version": 0`, restart — startup logs the stale warning and does not serve the old anchors
+- [x] `rm -rf .kb` then `KB_LLM_MODE=fake make run`; `POST /index`; `POST /chat` with a Chinese question against `docs/*.md` — response is no longer `"I cannot confirm that from the knowledge base."`
+- [x] Hand-edit `.kb/index.json` to `"anchor_version": 0`, restart — startup logs the stale warning and does not serve the old anchors
 
 ---
 
-## Phase 2: Ingest the real flow bundle
+## Phase 2: Ingest the real WPF replay bundle
 
 ### Changes
 
@@ -189,7 +189,7 @@ func (s Section) Meta() map[string]string { return s.meta }
 func (s Section) Images() []string        { return s.images }
 ```
 
-Update every call site to pass `nil, nil` where it has no metadata: `repo_markdown.go`, `dto_internal.go`, `service_test.go:354` (`mustSampleSections`), `repo_markdown_test.go`, `domain_test.go`, `fake_llm_test.go`.
+Update every call site to pass `nil, nil` where it has no metadata: `repo_markdown.go`, `dto_internal.go`, `service_test.go` (`mustSampleSections`), `repo_markdown_test.go`, `domain_test.go`, `fake_llm_test.go`.
 
 #### 2. Persist the new fields
 
@@ -206,7 +206,7 @@ type sectionJSON struct {
 ```
 Update `toSectionJSON` / `fromSectionJSON` to carry both through.
 
-#### 3. Recursive walk + relative paths + frontmatter + images
+#### 3. Recursive walk + relative paths + WPF metadata + images
 
 **File**: `internal/kb/repo_markdown.go`
 **Action**: modify
@@ -246,34 +246,34 @@ func (r *MarkdownRepo) Parse(ctx context.Context) ([]Section, int, error) {
 ```
 Add `io/fs` to imports.
 
-`parseMarkdownFile(path, relName string)` — replaces `fileName := filepath.Base(path)` (`:107`) with the passed `relName`. Two further changes inside:
+`parseMarkdownFile(path, relName string)` replaces `fileName := filepath.Base(path)` with the passed `relName`. The source bundle uses no YAML frontmatter; it records file metadata and screenshots as standard Markdown:
 
 ```go
-var imageRE = regexp.MustCompile(`\*\(Image:\s*([^)]+\.jpg)\)\*`)
+var metadataRE = regexp.MustCompile(`^\*\*([^*]+)\*\*:\s*(.+?)\s*$`)
+var imageRE = regexp.MustCompile(`!\[[^]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)`)
 
-// parseFrontmatter consumes a leading --- block and returns its key: value pairs
-// plus the number of lines consumed. Applied to every section in that file.
-func parseFrontmatter(lines []string) (map[string]string, int)
+func parseMetadata(body string) map[string]string
+func imagePaths(body string) []string
 ```
 
-Read the file into `[]string` lines first, call `parseFrontmatter`, then run the existing scanner loop over the remainder. In `flush()`:
+Read the file into lines and split it into heading sections. In `flush()`:
 - skip when `strings.TrimSpace(body.String()) == ""` (drops bodyless sections)
-- collect `imageRE.FindAllStringSubmatch` over the body into `images`
-- pass `meta` (the file's frontmatter) and `images` into `NewSection`
+- collect `**key**: value` metadata and standard Markdown image paths from the body
+- pass the collected `meta` and `images` into `NewSection`
 
 ### Verification
 
 #### Automated
-- [ ] `make verify` passes
-- [ ] `TestMarkdownRepoParseWalksNestedDirs` — `t.TempDir()` + `writeTestFile` creating `a/one.md` and `b/one.md`; assert both found and `File()` values differ (`"a/one.md"` vs `"b/one.md"`)
-- [ ] `TestMarkdownRepoParseExtractsFrontmatterAndImages` — a file with a `---` block and one `*(Image: BM-Login-F01-S01-x.jpg)*` line; assert `Meta()["PageCode"]` and `Images()` contents
-- [ ] `TestMarkdownRepoParseSkipsEmptyBodySections` — `# H1` immediately followed by `## H2` yields one section, not two
-- [ ] `TestMarkdownRepoSaveLoadRoundTrip` extended to assert `Meta`/`Images` survive
-- [ ] Existing `TestMarkdownRepoParseSplitsDocsIntoSections` still passes
+- [x] `make verify` passes
+- [x] `TestMarkdownRepoParseWalksNestedDirs` — `t.TempDir()` + `writeTestFile` creating `a/one.md` and `b/one.md`; assert both found and `File()` values differ (`"a/one.md"` vs `"b/one.md"`)
+- [x] `TestMarkdownRepoParseExtractsWPFMetadataAndImages` — a file containing `**功能區**: 登入`, `**到達路徑**: start`, and `![登入](../screenshots/登入/00_動態密碼登入.png)`; assert metadata and image path
+- [x] `TestMarkdownRepoParseSkipsEmptyBodySections` — `# H1` immediately followed by `## H2` yields one section, not two
+- [x] `TestMarkdownRepoSaveLoadRoundTrip` extended to assert `Meta`/`Images` survive
+- [x] `TestMarkdownRepoParseSplitsDocsIntoSections` updated for empty-body filtering
 
 #### Manual
-- [ ] Copy the 9-folder bundle under `docs/`; `POST /index` returns a plausible `sections` count
-- [ ] `POST /chat` returns a `sources` entry containing a folder path (e.g. `01_Login/BM-Login-F01.md#...`)
+- [ ] The 39 WPF replay Markdown files are under `docs/`; `POST /index` returns a plausible `sections` count
+- [ ] `POST /chat` returns a `sources` entry containing a WPF Markdown filename (e.g. `登入__00_動態密碼登入.md#登入-00_動態密碼登入`)
 
 ---
 

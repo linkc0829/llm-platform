@@ -54,11 +54,11 @@ func TestTokenize(t *testing.T) {
 }
 
 func TestBM25ScoreOrdersRelevantSectionFirst(t *testing.T) {
-	relevant, err := NewSection("refund_policy.md", "Refund Timeline", "Refunds are processed within 5-7 business days.")
+	relevant, err := NewSection("refund_policy.md", "Refund Timeline", "Refunds are processed within 5-7 business days.", nil, nil)
 	if err != nil {
 		t.Fatalf("NewSection(relevant) error = %v, want nil", err)
 	}
-	other, err := NewSection("shipping_faq.md", "Tracking Number", "Customers receive a tracking number by email.")
+	other, err := NewSection("shipping_faq.md", "Tracking Number", "Customers receive a tracking number by email.", nil, nil)
 	if err != nil {
 		t.Fatalf("NewSection(other) error = %v, want nil", err)
 	}

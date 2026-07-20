@@ -1,11 +1,11 @@
 package kb
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,23 +22,34 @@ func NewMarkdownRepo(docsDir, indexDir string) *MarkdownRepo {
 }
 
 func (r *MarkdownRepo) Parse(ctx context.Context) ([]Section, int, error) {
-	paths, err := filepath.Glob(filepath.Join(r.docsDir, "*.md"))
-	if err != nil {
-		return nil, 0, fmt.Errorf("glob docs: %w", err)
-	}
-
 	sections := make([]Section, 0)
-	for _, path := range paths {
-		if err := ctx.Err(); err != nil {
-			return nil, 0, err
-		}
-		fileSections, err := parseMarkdownFile(path)
+	files := 0
+	err := filepath.WalkDir(r.docsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil, 0, err
+			return err
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.EqualFold(filepath.Ext(path), ".md") {
+			return nil
+		}
+		rel, err := filepath.Rel(r.docsDir, path)
+		if err != nil {
+			return fmt.Errorf("relative path: %w", err)
+		}
+		fileSections, err := parseMarkdownFile(path, filepath.ToSlash(rel))
+		if err != nil {
+			return err
+		}
+		files++
 		sections = append(sections, fileSections...)
+		return nil
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("walk docs: %w", err)
 	}
-	return sections, len(paths), nil
+	return sections, files, nil
 }
 
 func (r *MarkdownRepo) Save(ctx context.Context, sections []Section) error {
@@ -100,15 +111,15 @@ func (r *MarkdownRepo) indexPath() string {
 }
 
 var headingRE = regexp.MustCompile(`^(#{1,6})\s+(.*)$`)
+var metadataRE = regexp.MustCompile(`^\*\*([^*]+)\*\*:\s*(.+?)\s*$`)
+var imageRE = regexp.MustCompile(`!\[[^]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)`)
 
-func parseMarkdownFile(path string) ([]Section, error) {
-	f, err := os.Open(path)
+func parseMarkdownFile(path, relName string) ([]Section, error) {
+	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("open markdown: %w", err)
+		return nil, fmt.Errorf("read markdown: %w", err)
 	}
-	defer f.Close()
 
-	fileName := filepath.Base(path)
 	sections := make([]Section, 0)
 	var heading string
 	var body strings.Builder
@@ -117,7 +128,13 @@ func parseMarkdownFile(path string) ([]Section, error) {
 		if heading == "" {
 			return nil
 		}
-		section, err := NewSection(fileName, heading, strings.TrimSpace(body.String()))
+		text := strings.TrimSpace(body.String())
+		if text == "" {
+			return nil
+		}
+		meta := parseMetadata(text)
+		images := imagePaths(text)
+		section, err := NewSection(relName, heading, text, meta, images)
 		if err != nil {
 			return err
 		}
@@ -126,9 +143,8 @@ func parseMarkdownFile(path string) ([]Section, error) {
 		return nil
 	}
 
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSuffix(line, "\r")
 		if match := headingRE.FindStringSubmatch(line); match != nil {
 			if err := flush(); err != nil {
 				return nil, err
@@ -141,11 +157,28 @@ func parseMarkdownFile(path string) ([]Section, error) {
 			body.WriteByte('\n')
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan markdown: %w", err)
-	}
 	if err := flush(); err != nil {
 		return nil, err
 	}
 	return sections, nil
+}
+
+func parseMetadata(body string) map[string]string {
+	meta := map[string]string{}
+	for _, line := range strings.Split(body, "\n") {
+		match := metadataRE.FindStringSubmatch(line)
+		if match != nil {
+			meta[match[1]] = match[2]
+		}
+	}
+	return meta
+}
+
+func imagePaths(body string) []string {
+	matches := imageRE.FindAllStringSubmatch(body, -1)
+	images := make([]string, 0, len(matches))
+	for _, match := range matches {
+		images = append(images, match[1])
+	}
+	return images
 }

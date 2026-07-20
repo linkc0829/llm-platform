@@ -14,23 +14,27 @@ type Section struct {
 	heading string
 	anchor  string
 	body    string
+	meta    map[string]string
+	images  []string
 }
 
-func NewSection(file, heading, body string) (Section, error) {
+func NewSection(file, heading, body string, meta map[string]string, images []string) (Section, error) {
 	if file == "" || heading == "" {
 		return Section{}, ErrInvalidSection
 	}
-	return Section{file: file, heading: heading, anchor: slugify(heading), body: body}, nil
+	return Section{file: file, heading: heading, anchor: slugify(heading), body: body, meta: meta, images: images}, nil
 }
 
-func rehydrateSection(file, heading, anchor, body string) Section {
-	return Section{file: file, heading: heading, anchor: anchor, body: body}
+func rehydrateSection(file, heading, anchor, body string, meta map[string]string, images []string) Section {
+	return Section{file: file, heading: heading, anchor: anchor, body: body, meta: meta, images: images}
 }
 
-func (s Section) File() string    { return s.file }
-func (s Section) Heading() string { return s.heading }
-func (s Section) Anchor() string  { return s.anchor }
-func (s Section) Body() string    { return s.body }
+func (s Section) File() string            { return s.file }
+func (s Section) Heading() string         { return s.heading }
+func (s Section) Anchor() string          { return s.anchor }
+func (s Section) Body() string            { return s.body }
+func (s Section) Meta() map[string]string { return s.meta }
+func (s Section) Images() []string        { return s.images }
 
 func (s Section) Citation() string {
 	return s.file + "#" + s.anchor
