@@ -40,7 +40,7 @@ func main() {
 		llm = fake
 		embedder = fake
 	} else {
-		oai := kb.NewOpenAIClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, cfg.OpenAI.ChatModel, cfg.OpenAI.EmbedModel)
+		oai := kb.NewOpenAIClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, cfg.OpenAI.EmbedBaseURL, cfg.OpenAI.ChatModel, cfg.OpenAI.EmbedModel)
 		llm = oai
 		embedder = oai
 	}

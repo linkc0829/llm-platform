@@ -11,21 +11,31 @@ import (
 
 // OpenAIClient implements LLM and Embedder.
 type OpenAIClient struct {
-	client     openai.Client
-	chatModel  openai.ChatModel
-	embedModel openai.EmbeddingModel
+	client      openai.Client
+	embedClient openai.Client
+	chatModel   openai.ChatModel
+	embedModel  openai.EmbeddingModel
 }
 
-func NewOpenAIClient(apiKey, baseURL, chatModel, embedModel string) *OpenAIClient {
+func NewOpenAIClient(apiKey, baseURL, embedBaseURL, chatModel, embedModel string) *OpenAIClient {
+	opts := openAIOptions(apiKey, baseURL)
+	if embedBaseURL == "" {
+		embedBaseURL = baseURL
+	}
+	return &OpenAIClient{
+		client:      openai.NewClient(opts...),
+		embedClient: openai.NewClient(openAIOptions(apiKey, embedBaseURL)...),
+		chatModel:   openai.ChatModel(chatModel),
+		embedModel:  openai.EmbeddingModel(embedModel),
+	}
+}
+
+func openAIOptions(apiKey, baseURL string) []option.RequestOption {
 	opts := []option.RequestOption{option.WithAPIKey(apiKey)}
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
-	return &OpenAIClient{
-		client:     openai.NewClient(opts...),
-		chatModel:  openai.ChatModel(chatModel),
-		embedModel: openai.EmbeddingModel(embedModel),
-	}
+	return opts
 }
 
 const groundingSystem = `You answer questions ONLY using the provided context sections. ` +
@@ -53,7 +63,7 @@ func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Sect
 }
 
 func (o *OpenAIClient) Embed(ctx context.Context, texts []string) ([][]float32, error) {
-	response, err := o.client.Embeddings.New(ctx, openai.EmbeddingNewParams{
+	response, err := o.embedClient.Embeddings.New(ctx, openai.EmbeddingNewParams{
 		Input: openai.EmbeddingNewParamsInputUnion{
 			OfArrayOfStrings: texts,
 		},

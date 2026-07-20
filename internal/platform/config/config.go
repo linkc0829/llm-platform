@@ -33,11 +33,12 @@ type LoggerConfig struct {
 }
 
 type OpenAIConfig struct {
-	APIKey     string `mapstructure:"api_key"`
-	LLMMode    string `mapstructure:"llm_mode"`
-	BaseURL    string `mapstructure:"base_url"`
-	ChatModel  string `mapstructure:"chat_model"`
-	EmbedModel string `mapstructure:"embed_model"`
+	APIKey       string `mapstructure:"api_key"`
+	LLMMode      string `mapstructure:"llm_mode"`
+	BaseURL      string `mapstructure:"base_url"`
+	EmbedBaseURL string `mapstructure:"embed_base_url"`
+	ChatModel    string `mapstructure:"chat_model"`
+	EmbedModel   string `mapstructure:"embed_model"`
 }
 
 type KBConfig struct {
@@ -77,19 +78,20 @@ func newViper() *viper.Viper {
 	v.AutomaticEnv()
 
 	binds := map[string]string{
-		"app.env":              "APP_ENV",
-		"app.name":             "APP_NAME",
-		"app.shutdown_timeout": "APP_SHUTDOWN_TIMEOUT",
-		"http.port":            "APP_PORT",
-		"logger.level":         "LOG_LEVEL",
-		"logger.encoding":      "LOG_ENCODING",
-		"openai.api_key":       "OPENAI_API_KEY",
-		"openai.llm_mode":      "KB_LLM_MODE",
-		"openai.base_url":      "OPENAI_BASE_URL",
-		"openai.chat_model":    "KB_CHAT_MODEL",
-		"openai.embed_model":   "KB_EMBED_MODEL",
-		"kb.docs_dir":          "KB_DOCS_DIR",
-		"kb.index_dir":         "KB_INDEX_DIR",
+		"app.env":               "APP_ENV",
+		"app.name":              "APP_NAME",
+		"app.shutdown_timeout":  "APP_SHUTDOWN_TIMEOUT",
+		"http.port":             "APP_PORT",
+		"logger.level":          "LOG_LEVEL",
+		"logger.encoding":       "LOG_ENCODING",
+		"openai.api_key":        "OPENAI_API_KEY",
+		"openai.llm_mode":       "KB_LLM_MODE",
+		"openai.base_url":       "OPENAI_BASE_URL",
+		"openai.embed_base_url": "KB_EMBED_BASE_URL",
+		"openai.chat_model":     "KB_CHAT_MODEL",
+		"openai.embed_model":    "KB_EMBED_MODEL",
+		"kb.docs_dir":           "KB_DOCS_DIR",
+		"kb.index_dir":          "KB_INDEX_DIR",
 	}
 	for k, env := range binds {
 		_ = v.BindEnv(k, env)
