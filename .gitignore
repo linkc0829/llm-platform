@@ -14,6 +14,9 @@ coverage.html
 .env
 .env.local
 
+# Generated knowledge-base index (rebuilt by POST /index; holds a full copy of docs/)
+.kb/
+
 # IDE
 .idea/
 .vscode/

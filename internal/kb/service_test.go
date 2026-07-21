@@ -137,7 +137,7 @@ func TestServiceLoadOnStartupIgnoresMismatchedVectorModel(t *testing.T) {
 	if !errors.Is(err, ErrVectorsIgnored) {
 		t.Fatalf("Service.LoadOnStartup() error = %v, want ErrVectorsIgnored", err)
 	}
-	answer, _, err := svc.Chat(context.Background(), "How long do refunds take?", "session")
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
 	if err != nil {
 		t.Fatalf("Service.Chat() error = %v, want nil", err)
 	}
@@ -165,7 +165,7 @@ func TestServiceConcurrentIndexAndChatUsesConsistentSnapshot(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, _, err := svc.Chat(context.Background(), "How long do refunds take?", "session")
+			_, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
 			if err != nil {
 				t.Errorf("Service.Chat(concurrent %d) error = %v, want nil", i, err)
 			}
@@ -236,7 +236,7 @@ func TestServiceChat(t *testing.T) {
 			svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
 			svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, tt.ready)
 
-			answer, sessionID, err := svc.Chat(context.Background(), tt.query, "session-1")
+			answer, sessionID, _, err := svc.ChatWithMetrics(context.Background(), tt.query, "session-1")
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Service.Chat(%q) error = %v, want %v", tt.query, err, tt.wantErr)
 			}
@@ -291,7 +291,7 @@ func TestServiceChatWeakScoreUsesVectorRetrieval(t *testing.T) {
 		vectorSection.Citation(): {0, 1},
 	}, true)
 
-	answer, _, err := svc.Chat(context.Background(), "weak weak", "session-1")
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "weak weak", "session-1")
 	if err != nil {
 		t.Fatalf("Service.Chat(weak vector query) error = %v, want nil", err)
 	}
@@ -312,7 +312,7 @@ func TestServiceChatAnswersChineseQueryWithZeroBM25(t *testing.T) {
 	svc := NewService(&fakeSectionStore{}, llm, embedder, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{sections[0].Citation(): {1, 0}, sections[1].Citation(): {0, 1}}, true)
 
-	answer, _, err := svc.Chat(context.Background(), query, "session")
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), query, "session")
 	if err != nil {
 		t.Fatalf("Service.Chat() error = %v, want nil", err)
 	}
@@ -329,7 +329,7 @@ func TestServiceChatEnglishIdentifierUsesBM25(t *testing.T) {
 	llm := &fakeLLM{answer: "answer"}
 	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot([]Section{section}, BuildCorpus([]Section{section}), map[string][]float32{}, true)
-	answer, _, err := svc.Chat(context.Background(), "LoginViewModel LoginViewModel LoginViewModel LoginViewModel LoginViewModel", "session")
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "LoginViewModel LoginViewModel LoginViewModel LoginViewModel LoginViewModel", "session")
 	if err != nil {
 		t.Fatalf("Service.Chat() error = %v, want nil", err)
 	}
@@ -344,12 +344,34 @@ func TestServiceChatDegradesWhenEmbedderFails(t *testing.T) {
 	svc := NewService(&fakeSectionStore{}, llm, &fakeEmbedder{err: errors.New("down")}, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{sections[0].Citation(): {1, 0}}, true)
 
-	answer, _, err := svc.Chat(context.Background(), "How long do refunds take?", "session")
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
 	if err != nil {
 		t.Fatalf("Service.Chat() error = %v, want nil", err)
 	}
 	if answer.Strategy() != "markdown" {
 		t.Errorf("Service.Chat() strategy = %q, want markdown", answer.Strategy())
+	}
+}
+
+func TestServiceChatReturnsCitedImages(t *testing.T) {
+	first, err := NewSection("login.md", "Password", "Password", nil, []string{"screenshots/login.png", "screenshots/shared.png"})
+	if err != nil {
+		t.Fatalf("NewSection(first) error = %v, want nil", err)
+	}
+	second, err := NewSection("reports.md", "Report", "Report", nil, []string{"screenshots/shared.png", "screenshots/report.png"})
+	if err != nil {
+		t.Fatalf("NewSection(second) error = %v, want nil", err)
+	}
+	svc := NewService(&fakeSectionStore{}, &fakeLLM{answer: "answer"}, nil, nil, NewInProcStore(), "test-model")
+	svc.storeIndexSnapshot([]Section{first, second}, BuildCorpus([]Section{first, second}), map[string][]float32{}, true)
+
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "Password Password Password Report Report Report", "session")
+	if err != nil {
+		t.Fatalf("Service.ChatWithMetrics() error = %v, want nil", err)
+	}
+	want := []string{"screenshots/login.png", "screenshots/shared.png", "screenshots/report.png"}
+	if !sameStrings(answer.Images(), want) {
+		t.Errorf("Service.ChatWithMetrics() images = %#v, want %#v", answer.Images(), want)
 	}
 }
 
@@ -359,7 +381,7 @@ func TestServiceChatGeneratesSessionID(t *testing.T) {
 	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, true)
 
-	_, sessionID, err := svc.Chat(context.Background(), "How long do refunds take?", "")
+	_, sessionID, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "")
 	if err != nil {
 		t.Fatalf("Service.Chat(empty session) error = %v, want nil", err)
 	}
@@ -374,11 +396,11 @@ func TestServiceChatUsesHistoryForFollowUpRetrieval(t *testing.T) {
 	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, true)
 
-	_, sessionID, err := svc.Chat(context.Background(), "How long do refunds take?", "")
+	_, sessionID, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "")
 	if err != nil {
 		t.Fatalf("Service.Chat(first turn) error = %v, want nil", err)
 	}
-	answer, _, err := svc.Chat(context.Background(), "And which items can't be refunded?", sessionID)
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "And which items can't be refunded?", sessionID)
 	if err != nil {
 		t.Fatalf("Service.Chat(follow-up) error = %v, want nil", err)
 	}

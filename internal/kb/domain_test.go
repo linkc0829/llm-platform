@@ -110,6 +110,16 @@ func TestFuseRRF(t *testing.T) {
 	}
 }
 
+func TestFuseRRFOrdersEqualScoresByIndex(t *testing.T) {
+	got := FuseRRF([][]ScoredSection{{{Index: 2}, {Index: 1}}, {{Index: 1}, {Index: 2}}}, 60)
+	want := []int{1, 2}
+	for i, index := range want {
+		if got[i].Index != index {
+			t.Errorf("FuseRRF() index %d = %d, want %d", i, got[i].Index, index)
+		}
+	}
+}
+
 func TestRankVector(t *testing.T) {
 	a, _ := NewSection("a.md", "A", "body", nil, nil)
 	b, _ := NewSection("b.md", "B", "body", nil, nil)

@@ -125,6 +125,19 @@ func TestMarkdownRepoParseExtractsWPFMetadataAndImages(t *testing.T) {
 	}
 }
 
+func TestMarkdownRepoParseSplitsNonWPFSlashHeading(t *testing.T) {
+	docsDir := t.TempDir()
+	writeTestFile(t, filepath.Join(docsDir, "guide.md"), "# Guide\nintro\n\n## Orders/Invoices\nbody")
+
+	sections, _, err := NewMarkdownRepo(docsDir, t.TempDir()).Parse(context.Background())
+	if err != nil {
+		t.Fatalf("MarkdownRepo.Parse() error = %v, want nil", err)
+	}
+	if len(sections) != 2 || sections[1].Heading() != "Orders/Invoices" {
+		t.Errorf("MarkdownRepo.Parse() sections = %#v, want split at non-WPF slash heading", sections)
+	}
+}
+
 func TestMarkdownRepoParseSkipsEmptyBodySections(t *testing.T) {
 	docsDir := t.TempDir()
 	writeTestFile(t, filepath.Join(docsDir, "doc.md"), "# H1\n## H2\nbody")

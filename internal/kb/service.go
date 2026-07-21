@@ -97,11 +97,6 @@ func (s *Service) LoadOnStartup(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) Chat(ctx context.Context, query, sessionID string) (Answer, string, error) {
-	answer, sessionID, _, err := s.chat(ctx, query, sessionID)
-	return answer, sessionID, err
-}
-
 func (s *Service) ChatWithMetrics(ctx context.Context, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
 	return s.chat(ctx, query, sessionID)
 }
@@ -174,7 +169,7 @@ func (s *Service) answerFrom(ctx context.Context, sessionID, query string, secti
 	if err != nil {
 		return Answer{}, sessionID, fmt.Errorf("llm answer: %w", err)
 	}
-	answer := NewAnswer(text, citationsFor(sections), strategy)
+	answer := NewAnswer(text, citationsFor(sections), strategy, imagesOf(sections))
 	s.appendTurn(ctx, sessionID, query, answer)
 	return answer, sessionID, nil
 }
@@ -234,7 +229,7 @@ func topSections(indexed []Section, ranked []ScoredSection, k int) []Section {
 }
 
 func (s *Service) cannotConfirm() Answer {
-	return NewAnswer("I cannot confirm that from the knowledge base.", nil, "")
+	return NewAnswer("I cannot confirm that from the knowledge base.", nil, "", nil)
 }
 
 func (s *Service) history(ctx context.Context, sessionID string) []Turn {
@@ -270,6 +265,23 @@ func bodiesOf(sections []Section) []string {
 		bodies = append(bodies, section.Body())
 	}
 	return bodies
+}
+
+// imagesOf collects the screenshot paths of the cited sections, deduplicated and
+// in citation order, so an answer can point at the screen it describes.
+func imagesOf(sections []Section) []string {
+	images := make([]string, 0, len(sections))
+	seen := map[string]bool{}
+	for _, section := range sections {
+		for _, image := range section.Images() {
+			if seen[image] {
+				continue
+			}
+			seen[image] = true
+			images = append(images, image)
+		}
+	}
+	return images
 }
 
 func citationsFor(sections []Section) []Citation {
