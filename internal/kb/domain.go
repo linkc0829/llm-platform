@@ -1,13 +1,50 @@
 package kb
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"strings"
 	"unicode"
 )
 
-const anchorVersion = 1
+var requiredMetadata = []string{"id", "team", "product", "doc_type", "version", "access_level", "owner", "last_reviewed"}
+
+// ValidateCorpus reports missing required metadata and ids shared by different files.
+func ValidateCorpus(sections []Section) []error {
+	files := map[string]map[string]string{}
+	ids := map[string]map[string]bool{}
+	for _, section := range sections {
+		if _, ok := files[section.File()]; !ok {
+			files[section.File()] = section.Meta()
+		}
+		id := strings.TrimSpace(section.Meta()["id"])
+		if id != "" {
+			if ids[id] == nil {
+				ids[id] = map[string]bool{}
+			}
+			ids[id][section.File()] = true
+		}
+	}
+	problems := make([]error, 0)
+	for file, meta := range files {
+		for _, key := range requiredMetadata {
+			if strings.TrimSpace(meta[key]) == "" {
+				problems = append(problems, fmt.Errorf("%s: missing %s", file, key))
+			}
+		}
+	}
+	for id, files := range ids {
+		if len(files) > 1 {
+			problems = append(problems, fmt.Errorf("id %q is used by multiple files", id))
+		}
+	}
+	sort.Slice(problems, func(i, j int) bool { return problems[i].Error() < problems[j].Error() })
+	return problems
+}
+
+// anchorVersion versions persisted section representation, including anchors and image paths.
+const anchorVersion = 2
 
 type Section struct {
 	file    string

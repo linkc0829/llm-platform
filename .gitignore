@@ -16,6 +16,9 @@ coverage.html
 
 # Generated knowledge-base index (rebuilt by POST /index; holds a full copy of docs/)
 .kb/
+docs/.kbimport-*/
+eval/.kbimport-*/
+*.bak/
 
 # IDE
 .idea/
@@ -32,3 +35,6 @@ Thumbs.db
 
 # Vendor
 /vendor/
+
+docs/
+eval/

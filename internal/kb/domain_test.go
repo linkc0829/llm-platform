@@ -166,3 +166,43 @@ func TestRankVector(t *testing.T) {
 		t.Errorf("RankVector() = %#v, want index 0 only", got)
 	}
 }
+
+func TestValidateCorpus(t *testing.T) {
+	valid := map[string]string{"id": "Store.POS--login", "team": "Store.POS", "product": "POS", "doc_type": "procedure", "version": "v1", "access_level": "internal", "owner": "POS", "last_reviewed": "2026-07-21"}
+	tests := []struct {
+		name string
+		secs []Section
+		want int
+	}{
+		{name: "valid_corpus", secs: []Section{corpusSection(t, "a.md", valid)}, want: 0},
+		{name: "missing_required_field", secs: []Section{corpusSection(t, "a.md", map[string]string{"id": "x"})}, want: 7},
+		{name: "duplicate_id_across_files", secs: []Section{corpusSection(t, "a.md", valid), corpusSection(t, "b.md", valid)}, want: 1},
+		{name: "reports_each_file_once", secs: []Section{corpusSection(t, "a.md", map[string]string{"id": "x"}), corpusSection(t, "a.md", map[string]string{"id": "x"})}, want: 7},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := len(ValidateCorpus(tt.secs)); got != tt.want {
+				t.Errorf("ValidateCorpus() errors = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateCorpusIsDeterministic(t *testing.T) {
+	secs := []Section{corpusSection(t, "b.md", map[string]string{}), corpusSection(t, "a.md", map[string]string{})}
+	first, second := ValidateCorpus(secs), ValidateCorpus(secs)
+	for i := range first {
+		if first[i].Error() != second[i].Error() {
+			t.Errorf("ValidateCorpus() error %d = %q, want %q", i, first[i], second[i])
+		}
+	}
+}
+
+func corpusSection(t *testing.T, file string, meta map[string]string) Section {
+	t.Helper()
+	section, err := NewSection(file, "Heading", "body", meta, nil)
+	if err != nil {
+		t.Fatalf("NewSection(%q) error = %v, want nil", file, err)
+	}
+	return section
+}

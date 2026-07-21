@@ -26,8 +26,8 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8080/chat `
 ## Endpoints
 
 - `GET /health` - health check.
-- `POST /index` - parses `docs/*.md`, writes `.kb/index.json` and `.kb/faiss_index/metadata.json`, and loads the in-memory index.
-- `POST /chat` - answers a question from indexed sections only, returning `answer`, `sources`, `strategy`, and `session_id`.
+- `POST /index` - parses all Markdown below `docs/`, writes `.kb/index.json`, and loads the in-memory index.
+- `POST /chat` - answers a question from indexed sections only, returning `answer`, `sources`, `images`, `strategy`, and `session_id`.
 
 ## Configuration
 
@@ -39,6 +39,18 @@ Environment variables:
 - `LOG_ENCODING` - zap encoding, default `json`.
 - `OPENAI_API_KEY` - required unless `KB_LLM_MODE=fake`.
 - `KB_LLM_MODE` - `openai` or `fake`, default `openai`.
+- `KB_DOCS_DIR` / `KB_INDEX_DIR` - source and local index directories.
+
+## Import a team bundle
+
+```powershell
+make import TEAM=Store.POS FROM=C:\Protech\wpf-replay\kb
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/index
+```
+
+Imported files live below `docs/<team>/`; screenshots are copied below that team's `_assets/` directory. `images` in `/chat` are paths relative to `KB_DOCS_DIR`.
+
+All imported documents currently share one access level and one index. If a team needs a separate trust boundary, run a separate instance with its own `KB_DOCS_DIR` and `KB_INDEX_DIR`.
 
 ## Layout
 
@@ -48,7 +60,8 @@ internal/kb/             # domain, service, ports, handlers, markdown/vector rep
 internal/platform/config # env/.env config loading
 internal/platform/httpserver
 internal/platform/logger
-docs/                    # Markdown knowledge base source files
+docs/<team>/             # Markdown knowledge base source files and _assets/
+eval/<team>/             # bundle eval YAML and kb_index.json
 thoughts/qrspi/          # QRSPI artifacts
 ```
 
@@ -64,6 +77,7 @@ Generated local artifacts:
 ```powershell
 make run      # run ./cmd/kb
 make build    # build bin/kb
+make import   # import a team bundle
 make test     # go test -race -short -count=1 ./...
 make lint     # golangci-lint run ./...
 make verify   # lint + test

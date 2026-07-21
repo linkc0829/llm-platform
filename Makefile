@@ -1,4 +1,4 @@
-.PHONY: help build run test test-unit lint fmt vet tidy clean hooks-install verify
+.PHONY: help build run import test test-unit lint fmt vet tidy clean hooks-install verify
 
 # ============================================================================
 # Variables
@@ -22,6 +22,9 @@ build: ## Build kb binary
 
 run: ## Run kb locally
 	go run ./cmd/kb
+
+import: ## Import a team bundle: make import TEAM=X FROM=Y
+	go run ./cmd/kbimport -team $(TEAM) -from $(FROM)
 
 # ============================================================================
 # Test
