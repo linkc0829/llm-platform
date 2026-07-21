@@ -533,8 +533,8 @@ Delete `topByCosine` (`:196-212`) — now unreachable, and the `unused` linter w
 - [x] Existing nil-embedder and history tests pass unchanged
 
 #### Manual
-- [ ] `POST /chat` with a Chinese how-to question returns `strategy == "hybrid"` and correct `sources`
-- [ ] Stop Ollama mid-session; `POST /chat` still answers English identifier queries instead of returning 500
+- [x] `POST /chat` with a Chinese how-to question returns `strategy == "hybrid"` and correct `sources`
+- [x] Stop Ollama mid-session; `POST /chat` still answers English identifier queries instead of returning 500
 
 ---
 
@@ -545,10 +545,10 @@ No production code. **File**: `thoughts/qrspi/2026-07-20-wpf-gherkin-kb/acceptan
 ### Verification
 
 #### Manual
-- [ ] `rm -rf .kb`; real bundle in `docs/`; Ollama running; `make run`; `POST /index`
-- [ ] Run 5 queries — 3 Chinese how-to, 2 English identifier — recording per query: answer correct (y/n), `sources`, `strategy`, screenshot filename returned (y/n), **observed `bm25Max` and `bestCosine`**
-- [ ] `strategy == "hybrid"` on at least the 3 Chinese queries
-- [ ] Write `acceptance.md` with the table above plus a one-line verdict on whether `cosineMin = 0.30` is defensible against the observed `bestCosine` spread
+- [x] `rm -rf .kb`; real bundle in `docs/`; Ollama running; `make run`; `POST /index`
+- [x] Run 5 queries — 3 Chinese how-to, 2 English identifier — recording per query: answer correct (y/n), `sources`, `strategy`, screenshot filename returned (y/n), **observed `bm25Max` and `bestCosine`**
+- [x] `strategy == "hybrid"` on at least the 3 Chinese queries
+- [x] Write `acceptance.md` with the table above plus a one-line verdict on whether `cosineMin = 0.30` is defensible against the observed `bestCosine` spread
 
 ---
 

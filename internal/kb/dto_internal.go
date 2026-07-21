@@ -10,9 +10,10 @@ type sectionJSON struct {
 }
 
 type indexJSON struct {
-	AnchorVersion int           `json:"anchor_version"`
-	Sections      []sectionJSON `json:"sections"`
-	Corpus        corpusJSON    `json:"corpus"`
+	AnchorVersion   int           `json:"anchor_version"`
+	DocsFingerprint string        `json:"docs_fingerprint"`
+	Sections        []sectionJSON `json:"sections"`
+	Corpus          corpusJSON    `json:"corpus"`
 }
 
 type corpusJSON struct {
