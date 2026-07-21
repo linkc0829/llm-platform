@@ -2,12 +2,17 @@
 
 A local Go service that indexes Markdown files from `docs/`, retrieves relevant sections with BM25/vector search, and answers questions with cited sources.
 
+**A fresh clone ships no corpus.** `docs/` and `eval/` are gitignored: they hold `make import` output, which is reproducible from a team's exporter bundle and runs to several megabytes of screenshots per team. Import at least one bundle before the service can answer anything — without it `POST /index` reports zero sections and every question is refused.
+
 ## Quick Start
 
 ```powershell
 cp .env.example .env
 # Set OPENAI_API_KEY, or use fake mode for quota-free local checks:
 $env:KB_LLM_MODE="fake"
+
+# Required: a fresh clone has an empty docs/. See "Import a team bundle".
+make import TEAM=Store.POS FROM=C:\Protech\wpf-replay\kb
 
 go run ./cmd/kb
 ```
@@ -19,7 +24,7 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8080/index
 
 Invoke-RestMethod -Method Post -Uri http://localhost:8080/chat `
   -ContentType "application/json" `
-  -Body '{"query":"How long do refunds take?"}' |
+  -Body '{"query":"登入畫面有哪些按鈕?"}' |
   ConvertTo-Json -Depth 5
 ```
 
@@ -48,7 +53,9 @@ make import TEAM=Store.POS FROM=C:\Protech\wpf-replay\kb
 Invoke-RestMethod -Method Post -Uri http://localhost:8080/index
 ```
 
-Imported files live below `docs/<team>/`; screenshots are copied below that team's `_assets/` directory. `images` in `/chat` are paths relative to `KB_DOCS_DIR`.
+Imported files live below `docs/<team>/`; screenshots are copied below that team's `_assets/` directory. `images` in `/chat` are paths relative to `KB_DOCS_DIR`, so they only resolve on a machine that has run the import — they are identifiers, not URLs a client can fetch.
+
+The import is transactional: it validates the staged bundle against every team already present and only then swaps the team's directory into place, so a rejected bundle leaves `docs/` untouched. Re-running it for the same team replaces that team's tree and nothing else.
 
 All imported documents currently share one access level and one index. If a team needs a separate trust boundary, run a separate instance with its own `KB_DOCS_DIR` and `KB_INDEX_DIR`.
 
@@ -60,14 +67,14 @@ internal/kb/             # domain, service, ports, handlers, markdown/vector rep
 internal/platform/config # env/.env config loading
 internal/platform/httpserver
 internal/platform/logger
-docs/<team>/             # Markdown knowledge base source files and _assets/
-eval/<team>/             # bundle eval YAML and kb_index.json
 thoughts/qrspi/          # QRSPI artifacts
 ```
 
-Generated local artifacts:
+Not in version control — recreate with `make import` and `POST /index`:
 
 ```text
+docs/<team>/             # imported Markdown and _assets/ screenshots
+eval/<team>/             # bundle eval YAML and kb_index.json
 .kb/index.json
 .kb/faiss_index/metadata.json
 ```
