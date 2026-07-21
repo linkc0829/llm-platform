@@ -113,6 +113,7 @@ func (r *MarkdownRepo) indexPath() string {
 var headingRE = regexp.MustCompile(`^(#{1,6})\s+(.*)$`)
 var metadataRE = regexp.MustCompile(`^\*\*([^*]+)\*\*:\s*(.+?)\s*$`)
 var imageRE = regexp.MustCompile(`!\[[^]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)`)
+var wpfReplayFileRE = regexp.MustCompile(`^.+__\d{2}_.+\.md$`)
 
 func parseMarkdownFile(path, relName string) ([]Section, error) {
 	b, err := os.ReadFile(path)
@@ -123,13 +124,14 @@ func parseMarkdownFile(path, relName string) ([]Section, error) {
 	sections := make([]Section, 0)
 	var heading string
 	var body strings.Builder
-	wpfFlow := false
+	wpfFlow := wpfReplayFileRE.MatchString(filepath.Base(relName))
 
 	flush := func() error {
 		if heading == "" {
 			return nil
 		}
 		text := strings.TrimSpace(body.String())
+		body.Reset()
 		if text == "" {
 			return nil
 		}
@@ -140,14 +142,13 @@ func parseMarkdownFile(path, relName string) ([]Section, error) {
 			return err
 		}
 		sections = append(sections, section)
-		body.Reset()
 		return nil
 	}
 
 	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSuffix(line, "\r")
 		if match := headingRE.FindStringSubmatch(line); match != nil {
-			if wpfFlow {
+			if wpfFlow && heading != "" {
 				body.WriteString(line)
 				body.WriteByte('\n')
 				continue
@@ -156,7 +157,6 @@ func parseMarkdownFile(path, relName string) ([]Section, error) {
 				return nil, err
 			}
 			heading = strings.TrimSpace(match[2])
-			wpfFlow = strings.Contains(heading, "/")
 			continue
 		}
 		if heading != "" {

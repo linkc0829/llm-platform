@@ -124,15 +124,19 @@ type Answer struct {
 	text     string
 	sources  []Citation
 	strategy string
+	images   []string
 }
 
-func NewAnswer(text string, sources []Citation, strategy string) Answer {
-	return Answer{text: text, sources: sources, strategy: strategy}
+func NewAnswer(text string, sources []Citation, strategy string, images []string) Answer {
+	return Answer{text: text, sources: sources, strategy: strategy, images: images}
 }
 
 func (a Answer) Text() string        { return a.text }
 func (a Answer) Sources() []Citation { return a.sources }
 func (a Answer) Strategy() string    { return a.strategy }
+
+// Images are the screenshot paths of the cited sections, in citation order.
+func (a Answer) Images() []string { return a.images }
 
 type Turn struct {
 	Query  string

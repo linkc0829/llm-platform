@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "purpose": "Run after indexing the WPF replay corpus. A grounded case must cite its primary_source first; a refusal case must not invent a source or procedure.",
+  "cases": [
+    {"id": "login_controls", "query": "動態密碼登入頁有哪些輸入欄位和按鈕？", "expect": {"type": "grounded", "primary_source": "登入__00_動態密碼登入.md#登入-00-動態密碼登入"}},
+    {"id": "login_password", "query": "Password", "expect": {"type": "grounded", "primary_source": "登入__00_動態密碼登入.md#登入-00-動態密碼登入"}},
+    {"id": "main_menu", "query": "主選單有哪些功能？", "expect": {"type": "grounded", "primary_source": "主選單__04_功能總覽.md#主選單-04-功能總覽"}},
+    {"id": "printer_setting", "query": "如何設定印表機？", "expect": {"type": "grounded", "primary_source": "周邊管理__67_印表機設定.md#周邊管理-67-印表機設定"}},
+    {"id": "receipt_print_setting", "query": "單據列印設定有哪些選項？", "expect": {"type": "grounded", "primary_source": "周邊管理__66_單據列印設定.md#周邊管理-66-單據列印設定"}},
+    {"id": "print_format", "query": "如何設定列印格式？", "expect": {"type": "grounded", "primary_source": "周邊管理__68_列印格式設定.md#周邊管理-68-列印格式設定"}},
+    {"id": "revenue_report", "query": "如何列印營收報表？", "expect": {"type": "grounded", "primary_source": "營業報表__62_報表列印條件.md#營業報表-62-報表列印條件"}},
+    {"id": "daily_revenue_preview", "query": "如何預覽日營收報表？", "expect": {"type": "grounded", "primary_source": "營業報表__63_日營收報表預覽.md#營業報表-63-日營收報表預覽"}},
+    {"id": "sales_report", "query": "商品銷售報表如何列印？", "expect": {"type": "grounded", "primary_source": "營業報表__64_商品銷售列印條件.md#營業報表-64-商品銷售列印條件"}},
+    {"id": "sales_preview", "query": "商品銷售清單如何預覽？", "expect": {"type": "grounded", "primary_source": "營業報表__65_商品銷售清單預覽.md#營業報表-65-商品銷售清單預覽"}},
+    {"id": "reprint_query", "query": "如何查詢要補印的訂單？", "expect": {"type": "grounded", "primary_source": "補印__47_補印訂單查詢.md#補印-47-補印訂單查詢"}},
+    {"id": "invoice_reprint", "query": "如何補印發票？", "expect": {"type": "grounded", "primary_source": "補印__49_發票補印結果.md#補印-49-發票補印結果"}},
+    {"id": "item_reprint", "query": "如何選取補印品項？", "expect": {"type": "grounded", "primary_source": "補印__52_補印品項選取.md#補印-52-補印品項選取"}},
+    {"id": "temporary_order", "query": "如何查看暫存訂單？", "expect": {"type": "grounded", "primary_source": "暫存訂單__41_暫存訂單列表.md#暫存訂單-41-暫存訂單列表"}},
+    {"id": "cancel_temporary_order", "query": "如何取消暫存訂單？", "expect": {"type": "grounded", "primary_source": "暫存訂單__42_取消訂單確認.md#暫存訂單-42-取消訂單確認"}},
+    {"id": "void_order", "query": "作廢訂單前要確認什麼？", "expect": {"type": "grounded", "primary_source": "作廢__59_作廢確認.md#作廢-59-作廢確認"}},
+    {"id": "order_main", "query": "點餐主畫面有哪些區塊？", "expect": {"type": "grounded", "primary_source": "點餐__05_點餐主畫面.md#點餐-05-點餐主畫面"}},
+    {"id": "combo_order", "query": "如何建立套餐訂單？", "expect": {"type": "grounded", "primary_source": "點餐__13_套餐訂單.md#點餐-13-套餐訂單"}},
+    {"id": "unknown_api_key", "query": "如何變更 API 金鑰？", "expect": {"type": "refuse"}},
+    {"id": "unknown_hr_policy", "query": "員工年假有幾天？", "expect": {"type": "refuse"}}
+  ]
+}
