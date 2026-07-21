@@ -1,0 +1,80 @@
+{
+  "info": {
+    "_postman_id": "a6e3081f-cc4f-4a71-9b1d-93f6b2f3d1d4",
+    "name": "WPF Gherkin KB",
+    "description": "Local acceptance checks for the WPF Gherkin knowledge base.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      }
+    },
+    {
+      "name": "Build Index",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/index"
+      }
+    },
+    {
+      "name": "Acceptance Queries",
+      "item": [
+        {
+          "name": "Chinese - Dynamic Password Login UI",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"query\": \"動態密碼登入頁有哪些輸入欄位和按鈕？\"\n}" },
+            "url": "{{baseUrl}}/chat"
+          }
+        },
+        {
+          "name": "Chinese - Printer Setup",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"query\": \"如何設定印表機？\"\n}" },
+            "url": "{{baseUrl}}/chat"
+          }
+        },
+        {
+          "name": "Chinese - Revenue Report Printing",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"query\": \"如何列印營收報表？\"\n}" },
+            "url": "{{baseUrl}}/chat"
+          }
+        },
+        {
+          "name": "English Identifier - Password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"query\": \"Password\"\n}" },
+            "url": "{{baseUrl}}/chat"
+          }
+        },
+        {
+          "name": "English Identifier - PART_TextBox",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"query\": \"PART_TextBox\"\n}" },
+            "url": "{{baseUrl}}/chat"
+          }
+        }
+      ]
+    }
+  ]
+}
