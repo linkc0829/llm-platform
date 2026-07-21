@@ -40,7 +40,11 @@ func openAIOptions(apiKey, baseURL string) []option.RequestOption {
 
 const groundingSystem = `You answer questions ONLY using the provided context sections. ` +
 	`If the answer is not contained in the context, reply that you cannot confirm it from ` +
-	`the knowledge base. Cite sources as filename#anchor.`
+	`the knowledge base. Cite sources as filename#anchor. ` +
+	`Only sections tagged evidence: procedure may support an action order, steps, or sequence. ` +
+	`Sections tagged ui_inventory, procedure_unlabeled, procedure_inferred, or general cannot support steps or sequence. ` +
+	`A procedure_unlabeled section proves only that a click occurred, never which control was clicked. ` +
+	`When no section is tagged evidence: procedure, list only confirmed controls or labels and state that the knowledge base does not record the operation steps; never invent or infer steps.`
 
 func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Section, history []Turn) (string, error) {
 	messages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(groundingSystem)}
@@ -97,7 +101,9 @@ func groundedPrompt(query string, sections []Section) string {
 	for _, section := range sections {
 		b.WriteString("\n[")
 		b.WriteString(section.Citation())
-		b.WriteString("]\n")
+		b.WriteString("] (evidence: ")
+		b.WriteString(section.EvidenceClass())
+		b.WriteString(")\n")
 		b.WriteString(section.Body())
 		b.WriteByte('\n')
 	}
