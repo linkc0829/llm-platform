@@ -53,6 +53,44 @@ func TestTokenize(t *testing.T) {
 	}
 }
 
+func TestSectionEvidenceClass(t *testing.T) {
+	tests := []struct {
+		name    string
+		file    string
+		heading string
+		body    string
+		meta    map[string]string
+		want    string
+	}{
+		{name: "crawler_ui_inventory", file: "登入__00_動態密碼登入.md", heading: "登入/00_動態密碼登入", body: "## 按鈕\n- Enter", want: "ui_inventory"},
+		{name: "export_heading_ui_inventory", file: "login.md", heading: "按鈕", body: "- Enter", want: "ui_inventory"},
+		{name: "nested_ui_inventory_heading", file: "login.md", heading: "Login", body: "### 按鈕\n- Enter", want: "ui_inventory"},
+		{name: "ui_inventory_file_applies_to_all_sections", file: "login-ui_inventory.md", heading: "畫面:登入", body: "說明", want: "ui_inventory"},
+		{name: "recorded_procedure", file: "login-procedure.md", heading: "步驟 1", body: "- **動作證據**:`recorded`", want: "procedure"},
+		{name: "recorded_unlabeled_procedure", file: "login-procedure.md", heading: "步驟 1", body: "- **動作證據**:`recorded_unlabeled`", want: "procedure_unlabeled"},
+		{name: "inferred_procedure", file: "login-procedure.md", heading: "步驟 1", body: "- **動作證據**:`inferred`", want: "procedure_inferred"},
+		{name: "not_attributable_procedure", file: "login-procedure.md", heading: "步驟 1", body: "- **動作證據**:`not_attributable`", want: "procedure_inferred"},
+		{name: "static_procedure_steps_are_general", file: "login-procedure.md", heading: "步驟", body: "此畫面為靜態，無錄製到的後續操作。", want: "general"},
+		{name: "procedure_template_with_bare_token_is_general", file: "login-procedure.md", heading: "證據說明", body: "`recorded` 僅為範例。", want: "general"},
+		{name: "procedure_file_does_not_use_generic_fallback", file: "login-procedure.md", heading: "步驟", body: "**Given** 登入畫面", want: "general"},
+		{name: "generic_procedure_wins_over_ui_marker", file: "flow.md", heading: "步驟 1", body: "## 按鈕\n**When** 點擊確認", want: "procedure"},
+		{name: "declared_doc_type_wins", file: "login-ui_inventory.md", heading: "按鈕", body: "- Enter", meta: map[string]string{"doc_type": "procedure"}, want: "procedure"},
+		{name: "general", file: "guide.md", heading: "說明", body: "一般說明", want: "general"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			section, err := NewSection(tt.file, tt.heading, tt.body, tt.meta, nil)
+			if err != nil {
+				t.Fatalf("NewSection(%q, %q) error = %v, want nil", tt.file, tt.heading, err)
+			}
+			if got := section.EvidenceClass(); got != tt.want {
+				t.Errorf("Section.EvidenceClass(%q, %q) = %q, want %q", tt.file, tt.heading, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBM25ScoreOrdersRelevantSectionFirst(t *testing.T) {
 	relevant, err := NewSection("refund_policy.md", "Refund Timeline", "Refunds are processed within 5-7 business days.", nil, nil)
 	if err != nil {

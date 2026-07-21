@@ -40,6 +40,60 @@ func (s Section) Citation() string {
 	return s.file + "#" + s.anchor
 }
 
+// EvidenceClass reports what the section can prove for an answer.
+func (s Section) EvidenceClass() string {
+	if docType := strings.TrimSpace(s.meta["doc_type"]); docType != "" {
+		return docType
+	}
+
+	file := strings.ToLower(s.file)
+	if strings.HasSuffix(file, "-ui_inventory.md") {
+		return "ui_inventory"
+	}
+
+	evidence := s.heading + "\n" + s.body
+	if strings.HasSuffix(file, "-procedure.md") {
+		return procedureEvidenceClass(evidence)
+	}
+
+	if strings.Contains(evidence, "**When**") || strings.Contains(evidence, "**Given**") ||
+		strings.HasPrefix(s.heading, "步驟") || hasMarkdownHeading(s.body, "步驟") {
+		return "procedure"
+	}
+	if s.heading == "按鈕" || s.heading == "輸入欄位" || s.heading == "截圖" ||
+		hasMarkdownHeading(s.body, "按鈕") || hasMarkdownHeading(s.body, "輸入欄位") || hasMarkdownHeading(s.body, "截圖") {
+		return "ui_inventory"
+	}
+	return "general"
+}
+
+func procedureEvidenceClass(text string) string {
+	switch {
+	case strings.Contains(text, "**動作證據**:`recorded`"):
+		return "procedure"
+	case strings.Contains(text, "**動作證據**:`recorded_unlabeled`"):
+		return "procedure_unlabeled"
+	case strings.Contains(text, "**動作證據**:`inferred`") || strings.Contains(text, "**動作證據**:`not_attributable`"):
+		return "procedure_inferred"
+	default:
+		return "general"
+	}
+}
+
+func hasMarkdownHeading(body, want string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimSpace(strings.TrimLeft(line, "#"))
+		if line == want || want == "步驟" && strings.HasPrefix(line, want) {
+			return true
+		}
+	}
+	return false
+}
+
 func slugify(h string) string {
 	var b strings.Builder
 	prevDash := false
