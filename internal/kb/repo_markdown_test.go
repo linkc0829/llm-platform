@@ -252,6 +252,31 @@ func TestMarkdownRepoParseReadsYAMLFrontmatter(t *testing.T) {
 	}
 }
 
+func TestMarkdownRepoParseClassifiesProcedureEvidencePerSection(t *testing.T) {
+	docsDir := t.TempDir()
+	writeTestFile(t, filepath.Join(docsDir, "POS-Ordering-procedure.md"),
+		"---\nid: \"POS-Ordering-procedure\"\ndoc_type: \"procedure\"\n---\n\n# 點餐 — 操作程序\n\n## 適用範圍\n點餐畫面。\n\n## 步驟\n\n### 步驟 1\n- **動作證據**:`recorded`\n\n### 步驟 2\n- **動作證據**:`recorded_unlabeled`\n\n### 步驟 3\n- **動作證據**:`not_attributable`\n")
+
+	sections, _, err := NewMarkdownRepo(docsDir, t.TempDir()).Parse(context.Background())
+	if err != nil {
+		t.Fatalf("MarkdownRepo.Parse() error = %v, want nil", err)
+	}
+	got := map[string]string{}
+	for _, section := range sections {
+		got[section.Heading()] = section.EvidenceClass()
+	}
+	for heading, want := range map[string]string{
+		"適用範圍": "general",
+		"步驟 1": "procedure",
+		"步驟 2": "procedure_unlabeled",
+		"步驟 3": "procedure_inferred",
+	} {
+		if got[heading] != want {
+			t.Errorf("MarkdownRepo.Parse() section %q evidence = %q, want %q", heading, got[heading], want)
+		}
+	}
+}
+
 func TestMarkdownRepoParseSkipsEmptyBodySections(t *testing.T) {
 	docsDir := t.TempDir()
 	writeTestFile(t, filepath.Join(docsDir, "doc.md"), "# H1\n## H2\nbody")
