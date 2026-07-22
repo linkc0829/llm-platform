@@ -11,7 +11,14 @@ import (
 )
 
 const (
-	// Thresholds are empirical for the sample docs; see the QRSPI plan calibration note.
+	// Thresholds are empirical for the sample docs.
+	//
+	// Measured against the 34-question Store.POS eval set (2026-07-21): neither
+	// score separates a correct source from an incorrect one, so tuning these
+	// cannot raise answer quality — it only shifts how many questions get refused.
+	//   bm25Max     hit median 7.86  vs miss median 11.58  (misses score higher)
+	//   bestCosine  hit median 0.622 vs miss median 0.639  (indistinguishable)
+	// Better answers need better retrieval or better source data, not tuning.
 	minThreshold = 1.2
 	topK         = 3
 	candidateK   = 20

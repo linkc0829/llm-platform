@@ -74,7 +74,12 @@ func TestSectionEvidenceClass(t *testing.T) {
 		{name: "procedure_template_with_bare_token_is_general", file: "login-procedure.md", heading: "證據說明", body: "`recorded` 僅為範例。", want: "general"},
 		{name: "procedure_file_does_not_use_generic_fallback", file: "login-procedure.md", heading: "步驟", body: "**Given** 登入畫面", want: "general"},
 		{name: "generic_procedure_wins_over_ui_marker", file: "flow.md", heading: "步驟 1", body: "## 按鈕\n**When** 點擊確認", want: "procedure"},
-		{name: "declared_doc_type_wins", file: "login-ui_inventory.md", heading: "按鈕", body: "- Enter", meta: map[string]string{"doc_type": "procedure"}, want: "procedure"},
+		{name: "declared_procedure_static_section_is_general", file: "login-procedure.md", heading: "適用範圍", body: "單一使用者目標：登入。", meta: map[string]string{"doc_type": "procedure"}, want: "general"},
+		{name: "declared_procedure_recorded_step", file: "login-procedure.md", heading: "步驟 1", body: "- **動作證據**:`recorded`", meta: map[string]string{"doc_type": "procedure"}, want: "procedure"},
+		{name: "declared_procedure_unlabeled_step", file: "login-procedure.md", heading: "步驟 1", body: "- **動作證據**:`recorded_unlabeled`", meta: map[string]string{"doc_type": "procedure"}, want: "procedure_unlabeled"},
+		{name: "declared_procedure_not_attributable_step", file: "login-procedure.md", heading: "步驟 1", body: "- **動作證據**:`not_attributable`", meta: map[string]string{"doc_type": "procedure"}, want: "procedure_inferred"},
+		{name: "declared_ui_inventory_applies_to_any_section", file: "login-ui_inventory.md", heading: "適用範圍", body: "說明", meta: map[string]string{"doc_type": "ui_inventory"}, want: "ui_inventory"},
+		{name: "unknown_doc_type_is_general", file: "login-ui_inventory.md", heading: "按鈕", body: "- Enter", meta: map[string]string{"doc_type": "typo"}, want: "general"},
 		{name: "general", file: "guide.md", heading: "說明", body: "一般說明", want: "general"},
 	}
 

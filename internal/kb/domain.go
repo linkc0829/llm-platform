@@ -79,8 +79,15 @@ func (s Section) Citation() string {
 
 // EvidenceClass reports what the section can prove for an answer.
 func (s Section) EvidenceClass() string {
-	if docType := strings.TrimSpace(s.meta["doc_type"]); docType != "" {
-		return docType
+	evidence := s.heading + "\n" + s.body
+	switch strings.TrimSpace(s.meta["doc_type"]) {
+	case "ui_inventory":
+		return "ui_inventory"
+	case "procedure":
+		return procedureEvidenceClass(evidence)
+	case "":
+	default:
+		return "general"
 	}
 
 	file := strings.ToLower(s.file)
@@ -88,7 +95,6 @@ func (s Section) EvidenceClass() string {
 		return "ui_inventory"
 	}
 
-	evidence := s.heading + "\n" + s.body
 	if strings.HasSuffix(file, "-procedure.md") {
 		return procedureEvidenceClass(evidence)
 	}
@@ -105,6 +111,7 @@ func (s Section) EvidenceClass() string {
 }
 
 func procedureEvidenceClass(text string) string {
+	// Exported procedure sections contain at most one action-evidence marker.
 	switch {
 	case strings.Contains(text, "**動作證據**:`recorded`"):
 		return "procedure"
