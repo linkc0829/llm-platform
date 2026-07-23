@@ -11,14 +11,25 @@ import (
 )
 
 const (
-	// Thresholds are empirical for the sample docs.
+	// Thresholds are empirical for the sample docs. Whether either one can
+	// discriminate depends on the corpus, so re-measure after it changes:
 	//
-	// Measured against the 34-question Store.POS eval set (2026-07-21): neither
-	// score separates a correct source from an incorrect one, so tuning these
-	// cannot raise answer quality — it only shifts how many questions get refused.
-	//   bm25Max     hit median 7.86  vs miss median 11.58  (misses score higher)
-	//   bestCosine  hit median 0.622 vs miss median 0.639  (indistinguishable)
-	// Better answers need better retrieval or better source data, not tuning.
+	// 2026-07-21, 34 questions, sections a median 34 characters long:
+	//   bm25Max     hit 7.86   vs miss 11.58   (misses score higher)
+	//   bestCosine  hit 0.622  vs miss 0.639   (indistinguishable)
+	//
+	// 2026-07-22, 29 questions, same source re-exported with static UIA text
+	// captured and control sections given full-sentence Chinese lead-ins
+	// (216 sections): bm25Max hit 11.74 vs miss 13.57, bestCosine 0.665 vs 0.638.
+	//
+	// So cosineMin is a meaningful knob and minThreshold is not: 34 characters
+	// gave the embedding almost nothing to encode, and the earlier "vectors add
+	// nothing" reading was a property of the thin corpus, not of the approach.
+	// bm25Max has never separated hits from misses under any corpus measured.
+	//
+	// The cosine margin depends on the corpus (it shrank when screens were split
+	// into smaller chunks, grew back when bodies gained Chinese context), so
+	// treat it as a property of the current data, not a constant — re-measure.
 	minThreshold = 1.2
 	topK         = 3
 	candidateK   = 20
