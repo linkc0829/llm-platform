@@ -34,6 +34,34 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8080/chat `
 - `POST /index` - parses all Markdown below `docs/`, writes `.kb/index.json`, and loads the in-memory index.
 - `POST /chat` - answers a question from indexed sections only, returning `answer`, `sources`, `images`, `strategy`, and `session_id`.
 
+## MCP for coding agents
+
+`kbmcp` is a local stdio MCP server. It exposes one read-only tool, `search_kb`, with a required `query` and optional `session_id`. It returns the answer, session ID, citations, image paths, and retrieval strategy.
+
+Import a bundle and build the index before starting it:
+
+```powershell
+make import TEAM=Store.POS FROM=C:\Protech\wpf-replay\kb
+go run ./cmd/kb
+# In another terminal: Invoke-RestMethod -Method Post -Uri http://localhost:8080/index
+```
+
+Then configure the agent to run `go run ./cmd/kbmcp` from this repository. For example:
+
+```json
+{
+  "mcpServers": {
+    "knowledge-base": {
+      "command": "go",
+      "args": ["run", "./cmd/kbmcp"],
+      "cwd": "C:\\path\\to\\knowledge-base-qa-bot"
+    }
+  }
+}
+```
+
+The same stdio command shape is supported by Codex, Claude Code, and Cline; place it in that client's MCP configuration file. MCP does not rebuild the index or expose the HTTP endpoints.
+
 ## Configuration
 
 Environment variables:
@@ -83,7 +111,7 @@ eval/<team>/             # bundle eval YAML and kb_index.json
 
 ```powershell
 make run      # run ./cmd/kb
-make build    # build bin/kb
+make build    # build bin/kb and bin/kbmcp
 make import   # import a team bundle
 make test     # go test -race -short -count=1 ./...
 make lint     # golangci-lint run ./...

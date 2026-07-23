@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/bootstrap"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/config"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/httpserver"
@@ -29,22 +30,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	repo := kb.NewMarkdownRepo(cfg.KB.DocsDir, cfg.KB.IndexDir)
-	vecRepo := kb.NewVectorRepo(cfg.KB.IndexDir)
-	sessions := kb.NewInProcStore()
-	var llm kb.LLM
-	var embedder kb.Embedder
 	if strings.EqualFold(cfg.OpenAI.LLMMode, "fake") {
 		lg.Warn("using fake LLM mode; responses are deterministic and do not call OpenAI")
-		fake := kb.NewFakeLLM()
-		llm = fake
-		embedder = fake
-	} else {
-		oai := kb.NewOpenAIClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, cfg.OpenAI.EmbedBaseURL, cfg.OpenAI.ChatModel, cfg.OpenAI.EmbedModel)
-		llm = oai
-		embedder = oai
 	}
-	svc := kb.NewService(repo, llm, embedder, vecRepo, sessions, cfg.OpenAI.EmbedModel)
+	svc := bootstrap.NewKBService(cfg)
 	if err := svc.LoadOnStartup(ctx); err != nil {
 		switch {
 		case errors.Is(err, kb.ErrNotIndexed):

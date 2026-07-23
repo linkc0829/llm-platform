@@ -19,6 +19,7 @@ help: ## Show this help
 build: ## Build kb binary
 	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/kb
+	go build -o $(BUILD_DIR)/kbmcp ./cmd/kbmcp
 
 run: ## Run kb locally
 	go run ./cmd/kb
