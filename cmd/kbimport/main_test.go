@@ -1,11 +1,38 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestRenameRetrySucceedsAfterTargetIsFree(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	dst := filepath.Join(dir, "dst")
+	if err := os.Mkdir(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := renameRetry(src, dst); err != nil {
+		t.Fatalf("renameRetry() = %v, want nil", err)
+	}
+	if _, err := os.Stat(dst); err != nil {
+		t.Errorf("target after rename = %v, want present", err)
+	}
+}
+
+func TestRenameRetryReturnsErrorWhenSourceMissing(t *testing.T) {
+	dir := t.TempDir()
+	err := renameRetry(filepath.Join(dir, "nope"), filepath.Join(dir, "dst"))
+	if err == nil {
+		t.Fatal("renameRetry() = nil, want error for a missing source")
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("renameRetry() error = %v, want ErrNotExist", err)
+	}
+}
 
 func TestStageMarkdown(t *testing.T) {
 	root := t.TempDir()

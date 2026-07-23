@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
 )
@@ -238,6 +239,31 @@ func validateEvalIndex(eval string, ids map[string]bool, team string) error {
 	})
 }
 
+// renameBackoff is the retry schedule for a directory rename. Windows briefly
+// holds a handle on a just-written directory (Defender / Search Indexer scanning
+// the freshly staged screenshots), so the swap-into-place rename fails with
+// "Access is denied" on the first try and succeeds moments later — observed
+// 5/5 first-try failures against docs/Store.POS. A short backoff clears it.
+var renameBackoff = []time.Duration{
+	20 * time.Millisecond, 50 * time.Millisecond,
+	100 * time.Millisecond, 250 * time.Millisecond,
+}
+
+// renameRetry is os.Rename with the backoff above. A rename that keeps failing
+// past the schedule still returns its error, so a genuine permission problem is
+// not masked, only a transient lock is ridden out.
+func renameRetry(oldpath, newpath string) error {
+	err := os.Rename(oldpath, newpath)
+	for _, d := range renameBackoff {
+		if err == nil {
+			return nil
+		}
+		time.Sleep(d)
+		err = os.Rename(oldpath, newpath)
+	}
+	return err
+}
+
 func replaceTeam(stageDocs, stageEval, docsTarget, evalTarget string) error {
 	return replaceOne(stageDocs, docsTarget, func() error { return replaceOne(stageEval, evalTarget, func() error { return nil }) })
 }
@@ -250,17 +276,17 @@ func replaceOne(stage, target string, next func() error) error {
 		return err
 	}
 	if _, err := os.Stat(target); err == nil {
-		if err := os.Rename(target, bak); err != nil {
+		if err := renameRetry(target, bak); err != nil {
 			return err
 		}
 	}
-	if err := os.Rename(stage, target); err != nil {
-		_ = os.Rename(bak, target)
+	if err := renameRetry(stage, target); err != nil {
+		_ = renameRetry(bak, target)
 		return err
 	}
 	if err := next(); err != nil {
 		_ = os.RemoveAll(target)
-		_ = os.Rename(bak, target)
+		_ = renameRetry(bak, target)
 		return err
 	}
 	return os.RemoveAll(bak)
