@@ -1,0 +1,123 @@
+package mcpserver
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
+)
+
+type fakeSearcher struct {
+	answer      kb.Answer
+	sessionID   string
+	err         error
+	errForEmpty bool
+	query       string
+	session     string
+}
+
+func (f *fakeSearcher) ChatWithMetrics(_ context.Context, query, sessionID string) (kb.Answer, string, kb.RetrievalMetrics, error) {
+	f.query = query
+	f.session = sessionID
+	if f.errForEmpty && query == "" {
+		return kb.Answer{}, "", kb.RetrievalMetrics{}, kb.ErrEmptyQuery
+	}
+	return f.answer, f.sessionID, kb.RetrievalMetrics{}, f.err
+}
+
+func TestSearchKB(t *testing.T) {
+	ctx := context.Background()
+	searcher := &fakeSearcher{answer: kb.NewAnswer("Use Settings.", []kb.Citation{kb.NewCitation("settings.md", "printer")}, "hybrid", nil), sessionID: "next-session"}
+	session := connect(t, New(searcher))
+
+	tools, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools() error = %v, want nil", err)
+	}
+	if len(tools.Tools) != 1 || tools.Tools[0].Name != "search_kb" {
+		t.Fatalf("ListTools() = %#v, want only search_kb", tools.Tools)
+	}
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_kb", Arguments: map[string]any{"query": "How do I configure a printer?", "session_id": "prior-session"}})
+	if err != nil {
+		t.Fatalf("CallTool(search_kb) error = %v, want nil", err)
+	}
+	if result.IsError {
+		t.Fatalf("CallTool(search_kb) IsError = true, want false")
+	}
+	if searcher.query != "How do I configure a printer?" || searcher.session != "prior-session" {
+		t.Errorf("ChatWithMetrics() query/session = %q/%q, want forwarded input", searcher.query, searcher.session)
+	}
+	got, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("CallTool(search_kb) structured content = %T, want map[string]any", result.StructuredContent)
+	}
+	if got["answer"] != "Use Settings." || got["session_id"] != "next-session" || got["strategy"] != "hybrid" {
+		t.Errorf("CallTool(search_kb) structured content = %#v, want answer, session ID, and strategy", got)
+	}
+	sources, ok := got["sources"].([]any)
+	if !ok || len(sources) != 1 || sources[0] != "settings.md#printer" {
+		t.Errorf("CallTool(search_kb) sources = %#v, want settings.md#printer", got["sources"])
+	}
+	images, ok := got["images"].([]any)
+	if !ok || len(images) != 0 {
+		t.Errorf("CallTool(search_kb) images = %#v, want an empty list", got["images"])
+	}
+	if len(result.Content) != 1 {
+		t.Errorf("CallTool(search_kb) content length = %d, want 1 JSON text result", len(result.Content))
+	} else if text, ok := result.Content[0].(*mcp.TextContent); !ok || !strings.Contains(text.Text, `"answer":"Use Settings."`) {
+		t.Errorf("CallTool(search_kb) text content = %#v, want JSON with the answer", result.Content[0])
+	}
+}
+
+func TestSearchKBReturnsToolErrors(t *testing.T) {
+	ctx := context.Background()
+	searcher := &fakeSearcher{err: kb.ErrNotIndexed}
+	session := connect(t, New(searcher))
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_kb", Arguments: map[string]any{"query": "Where is the report?"}})
+	if err != nil {
+		t.Fatalf("CallTool(search_kb) error = %v, want nil", err)
+	}
+	if !result.IsError {
+		t.Error("CallTool(search_kb) IsError = false, want true for an unavailable index")
+	}
+	if !errors.Is(searcher.err, kb.ErrNotIndexed) {
+		t.Errorf("fake search error = %v, want ErrNotIndexed", searcher.err)
+	}
+}
+
+func TestSearchKBRejectsEmptyQuery(t *testing.T) {
+	ctx := context.Background()
+	session := connect(t, New(&fakeSearcher{errForEmpty: true}))
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_kb", Arguments: map[string]any{"query": ""}})
+	if err != nil {
+		t.Fatalf("CallTool(search_kb) error = %v, want nil", err)
+	}
+	if !result.IsError {
+		t.Error("CallTool(search_kb) IsError = false, want true for an empty query")
+	}
+}
+
+func connect(t *testing.T, server *mcp.Server) *mcp.ClientSession {
+	t.Helper()
+	ctx := context.Background()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("Server.Connect() error = %v, want nil", err)
+	}
+	t.Cleanup(func() { serverSession.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "v1"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("Client.Connect() error = %v, want nil", err)
+	}
+	t.Cleanup(func() { session.Close() })
+	return session
+}
