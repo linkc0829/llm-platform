@@ -13,6 +13,7 @@ coverage.html
 # Env
 .env
 .env.local
+.env.openai
 
 # Generated knowledge-base index (rebuilt by POST /index; holds a full copy of docs/)
 .kb/
@@ -25,6 +26,8 @@ eval/.kbimport-*/
 .vscode/
 *.swp
 *.swo
+.codex
+.agents
 
 # OS
 .DS_Store
