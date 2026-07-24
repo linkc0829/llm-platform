@@ -31,7 +31,7 @@ func (f *fakeSearcher) ChatWithMetrics(_ context.Context, query, sessionID strin
 
 func TestSearchKB(t *testing.T) {
 	ctx := context.Background()
-	searcher := &fakeSearcher{answer: kb.NewAnswer("Use Settings.", []kb.Citation{kb.NewCitation("settings.md", "printer")}, "hybrid", nil), sessionID: "next-session"}
+	searcher := &fakeSearcher{answer: kb.NewAnswer("Use Settings.", []kb.Citation{kb.NewCitation("settings.md", "printer")}, "hybrid", nil, true), sessionID: "next-session"}
 	session := connect(t, New(searcher))
 
 	tools, err := session.ListTools(ctx, nil)
@@ -59,6 +59,9 @@ func TestSearchKB(t *testing.T) {
 	if got["answer"] != "Use Settings." || got["session_id"] != "next-session" || got["strategy"] != "hybrid" {
 		t.Errorf("CallTool(search_kb) structured content = %#v, want answer, session ID, and strategy", got)
 	}
+	if got["grounded"] != true {
+		t.Errorf("CallTool(search_kb) grounded = %#v, want true for a grounded answer", got["grounded"])
+	}
 	sources, ok := got["sources"].([]any)
 	if !ok || len(sources) != 1 || sources[0] != "settings.md#printer" {
 		t.Errorf("CallTool(search_kb) sources = %#v, want settings.md#printer", got["sources"])
@@ -71,6 +74,27 @@ func TestSearchKB(t *testing.T) {
 		t.Errorf("CallTool(search_kb) content length = %d, want 1 JSON text result", len(result.Content))
 	} else if text, ok := result.Content[0].(*mcp.TextContent); !ok || !strings.Contains(text.Text, `"answer":"Use Settings."`) {
 		t.Errorf("CallTool(search_kb) text content = %#v, want JSON with the answer", result.Content[0])
+	}
+}
+
+// TestSearchKBReportsUngrounded locks the R9 contract: an ungrounded answer
+// from the service (deny, or the model declining despite context) must surface
+// as grounded=false so the agent can branch on the field, not the prose.
+func TestSearchKBReportsUngrounded(t *testing.T) {
+	ctx := context.Background()
+	searcher := &fakeSearcher{answer: kb.NewAnswer("I cannot confirm that from the knowledge base.", nil, "", nil, false), sessionID: "s"}
+	session := connect(t, New(searcher))
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_kb", Arguments: map[string]any{"query": "今天台北天氣如何?"}})
+	if err != nil {
+		t.Fatalf("CallTool(search_kb) error = %v, want nil", err)
+	}
+	got, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("CallTool(search_kb) structured content = %T, want map[string]any", result.StructuredContent)
+	}
+	if got["grounded"] != false {
+		t.Errorf("CallTool(search_kb) grounded = %#v, want false for an ungrounded answer", got["grounded"])
 	}
 }
 

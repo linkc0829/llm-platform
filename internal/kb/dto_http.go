@@ -17,6 +17,7 @@ type ChatRequest struct {
 type ChatResponse struct {
 	SessionID  string   `json:"session_id"`
 	Answer     string   `json:"answer"`
+	Grounded   bool     `json:"grounded"`
 	Sources    []string `json:"sources"`
 	Images     []string `json:"images"`
 	Strategy   string   `json:"strategy"`
@@ -33,5 +34,5 @@ func toChatResponse(a Answer, sessionID string, metrics RetrievalMetrics) ChatRe
 	if images == nil {
 		images = []string{}
 	}
-	return ChatResponse{SessionID: sessionID, Answer: a.Text(), Sources: sources, Images: images, Strategy: a.Strategy(), BM25Max: metrics.BM25Max, BestCosine: metrics.BestCosine}
+	return ChatResponse{SessionID: sessionID, Answer: a.Text(), Grounded: a.Grounded(), Sources: sources, Images: images, Strategy: a.Strategy(), BM25Max: metrics.BM25Max, BestCosine: metrics.BestCosine}
 }

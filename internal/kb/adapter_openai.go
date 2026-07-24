@@ -38,14 +38,19 @@ func openAIOptions(apiKey, baseURL string) []option.RequestOption {
 	return opts
 }
 
+// ungroundedSentinel is the exact prefix the model must lead with when it
+// cannot answer from the context. The service strips it and sets Grounded=false,
+// so callers get a structured signal instead of parsing the refusal prose —
+// which proved unreliable across English, Chinese, and weak-model phrasings.
+const ungroundedSentinel = "[UNGROUNDED]"
+
 const groundingSystem = `You answer questions ONLY using the provided context sections. ` +
-	`If the answer is not contained in the context, reply that you cannot confirm it from ` +
-	`the knowledge base. Cite sources as filename#anchor. ` +
+	`Cite sources as filename#anchor. ` +
 	`Only sections tagged evidence: procedure or procedure_visual may support an action order, steps, or sequence. ` +
 	`Sections tagged ui_inventory, procedure_unlabeled, procedure_inferred, or general cannot support steps or sequence. ` +
 	`A procedure_visual section is a coordinate-and-screenshot visual review, not a UIA-resolved control; identify it as visual evidence when relying on it. ` +
 	`A procedure_unlabeled section proves only that a click occurred, never which control was clicked. ` +
-	`When no section is tagged evidence: procedure or procedure_visual, list only confirmed controls or labels and state that the knowledge base does not record the operation steps; never invent or infer steps.`
+	`Whenever you cannot answer the question from the context — the context is unrelated to the question, or it only lists controls while the question asks for operation steps or order the knowledge base does not record — begin your reply with the exact token ` + ungroundedSentinel + ` followed by a brief reason, and never invent or infer steps.`
 
 func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Section, history []Turn) (string, error) {
 	messages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(groundingSystem)}
