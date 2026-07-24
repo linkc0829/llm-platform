@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.uber.org/zap"
 
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
 )
@@ -28,8 +29,13 @@ type SearchOutput struct {
 	Strategy  string   `json:"strategy" jsonschema:"the retrieval strategy used"`
 }
 
-// New builds an MCP server with the read-only search_kb tool.
-func New(svc searcher) *mcp.Server {
+// New builds an MCP server with the read-only search_kb tool. log records every
+// call to stderr so an operator can see what an agent asked and what came back;
+// pass a stderr-backed logger (never stdout — that carries the stdio protocol).
+func New(svc searcher, log *zap.Logger) *mcp.Server {
+	if log == nil {
+		log = zap.NewNop()
+	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "knowledge-base-qa-bot", Version: "v1"}, nil)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search_kb",
@@ -37,9 +43,18 @@ func New(svc searcher) *mcp.Server {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
 		answer, sessionID, _, err := svc.ChatWithMetrics(ctx, input.Query, input.SessionID)
 		if err != nil {
+			log.Error("search_kb", zap.String("query", input.Query), zap.Error(err))
 			return nil, SearchOutput{}, fmt.Errorf("search knowledge base: %w", err)
 		}
-		return nil, toSearchOutput(answer, sessionID), nil
+		out := toSearchOutput(answer, sessionID)
+		log.Info("search_kb",
+			zap.String("query", input.Query),
+			zap.Bool("grounded", out.Grounded),
+			zap.String("strategy", out.Strategy),
+			zap.Strings("sources", out.Sources),
+			zap.String("session", sessionID),
+		)
+		return nil, out, nil
 	})
 	return server
 }

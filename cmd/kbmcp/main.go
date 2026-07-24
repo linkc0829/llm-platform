@@ -14,6 +14,7 @@ import (
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/mcpserver"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/config"
+	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/logger"
 )
 
 func main() {
@@ -21,6 +22,13 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
+
+	// stderr, never stdout: stdout carries the JSON-RPC protocol on this transport.
+	lg, err := logger.New(logger.Config{Level: cfg.Logger.Level, Encoding: cfg.Logger.Encoding, Output: "stderr"})
+	if err != nil {
+		fatal(err)
+	}
+	defer func() { _ = lg.Sync() }()
 
 	svc := bootstrap.NewKBService(cfg)
 	if err := svc.LoadOnStartup(context.Background()); err != nil {
@@ -34,7 +42,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := mcpserver.New(svc).Run(ctx, &mcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
+	if err := mcpserver.New(svc, lg).Run(ctx, &mcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
 		fatal(fmt.Errorf("run MCP server: %w", err))
 	}
 }
