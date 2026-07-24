@@ -115,6 +115,8 @@ func procedureEvidenceClass(text string) string {
 	switch {
 	case strings.Contains(text, "**動作證據**:`recorded`"):
 		return "procedure"
+	case strings.Contains(text, "**動作證據**:`vision_inferred`"):
+		return "procedure_visual"
 	case strings.Contains(text, "**動作證據**:`recorded_unlabeled`"):
 		return "procedure_unlabeled"
 	case strings.Contains(text, "**動作證據**:`inferred`") || strings.Contains(text, "**動作證據**:`not_attributable`"):
