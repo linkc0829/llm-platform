@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.uber.org/zap"
 
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
 )
@@ -32,7 +33,7 @@ func (f *fakeSearcher) ChatWithMetrics(_ context.Context, query, sessionID strin
 func TestSearchKB(t *testing.T) {
 	ctx := context.Background()
 	searcher := &fakeSearcher{answer: kb.NewAnswer("Use Settings.", []kb.Citation{kb.NewCitation("settings.md", "printer")}, "hybrid", nil, true), sessionID: "next-session"}
-	session := connect(t, New(searcher))
+	session := connect(t, New(searcher, zap.NewNop()))
 
 	tools, err := session.ListTools(ctx, nil)
 	if err != nil {
@@ -83,7 +84,7 @@ func TestSearchKB(t *testing.T) {
 func TestSearchKBReportsUngrounded(t *testing.T) {
 	ctx := context.Background()
 	searcher := &fakeSearcher{answer: kb.NewAnswer("I cannot confirm that from the knowledge base.", nil, "", nil, false), sessionID: "s"}
-	session := connect(t, New(searcher))
+	session := connect(t, New(searcher, zap.NewNop()))
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_kb", Arguments: map[string]any{"query": "今天台北天氣如何?"}})
 	if err != nil {
@@ -101,7 +102,7 @@ func TestSearchKBReportsUngrounded(t *testing.T) {
 func TestSearchKBReturnsToolErrors(t *testing.T) {
 	ctx := context.Background()
 	searcher := &fakeSearcher{err: kb.ErrNotIndexed}
-	session := connect(t, New(searcher))
+	session := connect(t, New(searcher, zap.NewNop()))
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_kb", Arguments: map[string]any{"query": "Where is the report?"}})
 	if err != nil {
@@ -117,7 +118,7 @@ func TestSearchKBReturnsToolErrors(t *testing.T) {
 
 func TestSearchKBRejectsEmptyQuery(t *testing.T) {
 	ctx := context.Background()
-	session := connect(t, New(&fakeSearcher{errForEmpty: true}))
+	session := connect(t, New(&fakeSearcher{errForEmpty: true}, zap.NewNop()))
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_kb", Arguments: map[string]any{"query": ""}})
 	if err != nil {

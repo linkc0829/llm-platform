@@ -12,6 +12,9 @@ import (
 type Config struct {
 	Level    string // debug, info, warn, error
 	Encoding string // json, console
+	Output   string // stdout (default) or stderr. An MCP stdio server MUST use
+	// stderr: its stdout carries the JSON-RPC protocol, and any log line written
+	// there corrupts the stream and breaks the client connection.
 }
 
 // New constructs a zap.Logger. Caller is responsible for calling Sync() on
@@ -27,12 +30,17 @@ func New(cfg Config) (*zap.Logger, error) {
 		encoding = "json"
 	}
 
+	output := cfg.Output
+	if output == "" {
+		output = "stdout"
+	}
+
 	zcfg := zap.Config{
 		Level:            zap.NewAtomicLevelAt(level),
 		Development:      false,
 		Encoding:         encoding,
 		EncoderConfig:    encoderConfig(),
-		OutputPaths:      []string{"stdout"},
+		OutputPaths:      []string{output},
 		ErrorOutputPaths: []string{"stderr"},
 	}
 	l, err := zcfg.Build(zap.AddStacktrace(zapcore.ErrorLevel))
