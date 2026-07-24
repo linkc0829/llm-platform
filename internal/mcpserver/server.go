@@ -20,7 +20,8 @@ type SearchInput struct {
 }
 
 type SearchOutput struct {
-	Answer    string   `json:"answer" jsonschema:"the answer grounded in the knowledge base"`
+	Answer    string   `json:"answer" jsonschema:"the natural-language answer; may be a refusal, so branch on grounded rather than parsing this text"`
+	Grounded  bool     `json:"grounded" jsonschema:"true when the answer is backed by the knowledge base; false when retrieval fell short or the model declined to answer despite context"`
 	SessionID string   `json:"session_id" jsonschema:"the session ID to reuse for follow-up questions"`
 	Sources   []string `json:"sources" jsonschema:"knowledge-base citations supporting the answer"`
 	Images    []string `json:"images" jsonschema:"screenshot paths associated with cited sections"`
@@ -52,5 +53,5 @@ func toSearchOutput(answer kb.Answer, sessionID string) SearchOutput {
 	if images == nil {
 		images = []string{}
 	}
-	return SearchOutput{Answer: answer.Text(), SessionID: sessionID, Sources: sources, Images: images, Strategy: answer.Strategy()}
+	return SearchOutput{Answer: answer.Text(), Grounded: answer.Grounded(), SessionID: sessionID, Sources: sources, Images: images, Strategy: answer.Strategy()}
 }

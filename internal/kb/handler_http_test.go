@@ -59,11 +59,11 @@ func TestHandlerChat(t *testing.T) {
 			name: "happy_path_returns_answer_sources_strategy",
 			body: `{"query":"How long do refunds take?","session_id":"s1"}`,
 			svc: &fakeHandlerService{
-				chatAnswer:    NewAnswer("Refunds take 5-7 business days.", []Citation{NewCitation("refund_policy.md", "refund-timeline")}, "markdown", []string{"../screenshots/refund.png"}),
+				chatAnswer:    NewAnswer("Refunds take 5-7 business days.", []Citation{NewCitation("refund_policy.md", "refund-timeline")}, "markdown", []string{"../screenshots/refund.png"}, true),
 				chatSessionID: "s1",
 			},
 			wantStatus: http.StatusOK,
-			wantBody:   `"images":["../screenshots/refund.png"]`,
+			wantBody:   `"grounded":true,"sources":["refund_policy.md#refund-timeline"]`,
 		},
 	}
 

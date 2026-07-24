@@ -225,15 +225,22 @@ type Answer struct {
 	sources  []Citation
 	strategy string
 	images   []string
+	grounded bool
 }
 
-func NewAnswer(text string, sources []Citation, strategy string, images []string) Answer {
-	return Answer{text: text, sources: sources, strategy: strategy, images: images}
+func NewAnswer(text string, sources []Citation, strategy string, images []string, grounded bool) Answer {
+	return Answer{text: text, sources: sources, strategy: strategy, images: images, grounded: grounded}
 }
 
 func (a Answer) Text() string        { return a.text }
 func (a Answer) Sources() []Citation { return a.sources }
 func (a Answer) Strategy() string    { return a.strategy }
+
+// Grounded reports whether the answer is backed by the knowledge base. It is
+// false when retrieval fell below threshold (deny) and when the model, though
+// given context, declined to answer — so a caller can branch on it without
+// parsing the answer text. See the [ungroundedSentinel] contract.
+func (a Answer) Grounded() bool { return a.grounded }
 
 // Images are the screenshot paths of the cited sections, in citation order.
 func (a Answer) Images() []string { return a.images }

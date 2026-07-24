@@ -144,6 +144,32 @@ func TestServiceLoadOnStartupIgnoresMismatchedVectorModel(t *testing.T) {
 	if answer.Strategy() != "markdown" {
 		t.Errorf("Service.Chat() strategy = %q, want markdown", answer.Strategy())
 	}
+	if !answer.Grounded() {
+		t.Error("Service.Chat() grounded = false, want true for a plain answer")
+	}
+}
+
+// TestServiceChatStripsUngroundedSentinel locks the sentinel contract: when the
+// model leads a refusal with ungroundedSentinel despite retrieved context, the
+// service must report grounded=false and strip the marker, leaving the reason.
+func TestServiceChatStripsUngroundedSentinel(t *testing.T) {
+	sections := mustSampleSections(t)
+	llm := &fakeLLM{answer: ungroundedSentinel + " only a control list, no recorded steps"}
+	svc := NewService(&fakeSectionStore{loadSections: sections}, llm, nil, nil, NewInProcStore(), "test-model")
+	if err := svc.LoadOnStartup(context.Background()); err != nil {
+		t.Fatalf("Service.LoadOnStartup() error = %v, want nil", err)
+	}
+
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
+	if err != nil {
+		t.Fatalf("Service.Chat() error = %v, want nil", err)
+	}
+	if answer.Grounded() {
+		t.Error("Service.Chat() grounded = true, want false when the model leads with the ungrounded sentinel")
+	}
+	if got := answer.Text(); got != "only a control list, no recorded steps" {
+		t.Errorf("Service.Chat() answer = %q, want the sentinel stripped to its reason", got)
+	}
 }
 
 func TestServiceConcurrentIndexAndChatUsesConsistentSnapshot(t *testing.T) {

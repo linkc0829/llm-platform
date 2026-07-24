@@ -187,7 +187,15 @@ func (s *Service) answerFrom(ctx context.Context, sessionID, query string, secti
 	if err != nil {
 		return Answer{}, sessionID, fmt.Errorf("llm answer: %w", err)
 	}
-	answer := NewAnswer(text, citationsFor(sections), strategy, imagesOf(sections))
+	// The model leads a refusal with ungroundedSentinel even when we retrieved
+	// context (unrelated match, or ui_inventory only for a steps question). Strip
+	// it and report grounded=false, so retrieval succeeding != answer grounded.
+	grounded := true
+	if trimmed := strings.TrimSpace(text); strings.HasPrefix(trimmed, ungroundedSentinel) {
+		grounded = false
+		text = strings.TrimSpace(strings.TrimPrefix(trimmed, ungroundedSentinel))
+	}
+	answer := NewAnswer(text, citationsFor(sections), strategy, imagesOf(sections), grounded)
 	s.appendTurn(ctx, sessionID, query, answer)
 	return answer, sessionID, nil
 }
@@ -247,7 +255,7 @@ func topSections(indexed []Section, ranked []ScoredSection, k int) []Section {
 }
 
 func (s *Service) cannotConfirm() Answer {
-	return NewAnswer("I cannot confirm that from the knowledge base.", nil, "", nil)
+	return NewAnswer("I cannot confirm that from the knowledge base.", nil, "", nil, false)
 }
 
 func (s *Service) history(ctx context.Context, sessionID string) []Turn {
