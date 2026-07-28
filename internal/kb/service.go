@@ -190,12 +190,16 @@ func (s *Service) answerFrom(ctx context.Context, sessionID, query string, secti
 	// The model leads a refusal with ungroundedSentinel even when we retrieved
 	// context (unrelated match, or ui_inventory only for a steps question). Strip
 	// it and report grounded=false, so retrieval succeeding != answer grounded.
-	grounded := true
-	if trimmed := strings.TrimSpace(text); strings.HasPrefix(trimmed, ungroundedSentinel) {
-		grounded = false
-		text = strings.TrimSpace(strings.TrimPrefix(trimmed, ungroundedSentinel))
+	text, ungrounded := splitUngrounded(text)
+	// A refusal carries no usable sources. deny() already returns none, so
+	// dropping them here makes "grounded == false implies no citations" hold on
+	// both paths — otherwise a refusal comes back decorated with citations that
+	// support nothing, which is the more misleading half of a missed sentinel.
+	sources, images := citationsFor(sections), imagesOf(sections)
+	if ungrounded {
+		sources, images = nil, nil
 	}
-	answer := NewAnswer(text, citationsFor(sections), strategy, imagesOf(sections), grounded)
+	answer := NewAnswer(text, sources, strategy, images, !ungrounded)
 	s.appendTurn(ctx, sessionID, query, answer)
 	return answer, sessionID, nil
 }

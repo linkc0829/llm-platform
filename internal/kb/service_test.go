@@ -170,6 +170,52 @@ func TestServiceChatStripsUngroundedSentinel(t *testing.T) {
 	if got := answer.Text(); got != "only a control list, no recorded steps" {
 		t.Errorf("Service.Chat() answer = %q, want the sentinel stripped to its reason", got)
 	}
+	if len(answer.Sources()) != 0 {
+		t.Errorf("Service.Chat() sources = %v, want none — a refusal cites nothing", answer.Sources())
+	}
+}
+
+// TestServiceChatDetectsCorruptedSentinel covers what a weak model actually
+// emits. Asked for an exact token, llama3.1:8b answered "[UNEQUIPPED] ..." for a
+// refusal; the old exact prefix match missed it and reported grounded=true with
+// citations attached. Detection must tolerate the token being mangled or
+// decorated, while a real answer must never be mistaken for a refusal.
+func TestServiceChatDetectsCorruptedSentinel(t *testing.T) {
+	tests := []struct {
+		name         string
+		answer       string
+		wantGrounded bool
+		wantText     string
+	}{
+		{"exact_sentinel", "[UNGROUNDED] no recorded steps", false, "no recorded steps"},
+		{"observed_corruption_unequipped", "[UNEQUIPPED] the context lists controls only", false, "the context lists controls only"},
+		{"markdown_emphasis", "**[UNGROUNDED]** no steps recorded", false, "no steps recorded"},
+		{"answer_lead_in", "Answer: [UNGROUNDED] nothing to go on", false, "nothing to go on"},
+		{"grounded_answer_untouched", "Click Settings, then Printers.", true, "Click Settings, then Printers."},
+		{"bracket_in_prose_is_not_a_refusal", "Use the [UNIT] field on the form.", true, "Use the [UNIT] field on the form."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sections := mustSampleSections(t)
+			svc := NewService(&fakeSectionStore{loadSections: sections}, &fakeLLM{answer: tt.answer}, nil, nil, NewInProcStore(), "test-model")
+			if err := svc.LoadOnStartup(context.Background()); err != nil {
+				t.Fatalf("Service.LoadOnStartup() error = %v, want nil", err)
+			}
+			answer, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
+			if err != nil {
+				t.Fatalf("Service.Chat() error = %v, want nil", err)
+			}
+			if answer.Grounded() != tt.wantGrounded {
+				t.Errorf("Service.Chat() grounded = %v, want %v for %q", answer.Grounded(), tt.wantGrounded, tt.answer)
+			}
+			if got := answer.Text(); got != tt.wantText {
+				t.Errorf("Service.Chat() answer = %q, want %q", got, tt.wantText)
+			}
+			if !tt.wantGrounded && len(answer.Sources()) != 0 {
+				t.Errorf("Service.Chat() sources = %v, want none for a refusal", answer.Sources())
+			}
+		})
+	}
 }
 
 func TestServiceConcurrentIndexAndChatUsesConsistentSnapshot(t *testing.T) {
