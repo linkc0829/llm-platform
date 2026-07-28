@@ -20,3 +20,4 @@ type SessionStore interface {
 	Get(ctx context.Context, id string) []Turn
 	Append(ctx context.Context, id string, turn Turn)
 }
+

@@ -41,3 +41,5 @@ Thumbs.db
 
 docs/
 eval/
+run_eval.py
+eval_out.json
