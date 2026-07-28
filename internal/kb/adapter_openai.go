@@ -3,6 +3,7 @@ package kb
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/openai/openai-go"
@@ -43,6 +44,31 @@ func openAIOptions(apiKey, baseURL string) []option.RequestOption {
 // so callers get a structured signal instead of parsing the refusal prose —
 // which proved unreliable across English, Chinese, and weak-model phrasings.
 const ungroundedSentinel = "[UNGROUNDED]"
+
+// ungroundedPattern matches the sentinel tolerantly. A weak model asked for an
+// exact token does not reliably produce one: llama3.1:8b emitted [UNEQUIPPED]
+// for a refusal, which an exact prefix match missed, so the refusal was reported
+// as grounded=true with citations attached. Accept any leading bracketed
+// UN-token, and let common decoration (markdown emphasis, a code fence, an
+// "Answer:" lead-in) sit in front of it.
+//
+// Best effort by construction: a model that refuses in plain prose with no token
+// at all still reads as grounded. The deny path in service.go never consults the
+// model, so it stays exact regardless.
+// Trailing [*_:：,.、 -]* also consumes the closing emphasis and any punctuation
+// joining the token to its reason, so the stripped text starts at the reason.
+var ungroundedPattern = regexp.MustCompile(`^\s*(?:` + "```" + `[a-zA-Z]*\s*)?(?:[*_> ]*)(?:(?i:answer|答案|回答)\s*[:：]\s*)?[*_ ]*\[\s*UN[A-Z_ ]*\s*\][*_:：,.、 -]*`)
+
+// splitUngrounded reports whether text is an ungrounded refusal, returning the
+// text with the sentinel removed.
+func splitUngrounded(text string) (string, bool) {
+	loc := ungroundedPattern.FindStringIndex(strings.TrimSpace(text))
+	if loc == nil {
+		return strings.TrimSpace(text), false
+	}
+	trimmed := strings.TrimSpace(text)
+	return strings.TrimSpace(trimmed[loc[1]:]), true
+}
 
 const groundingSystem = `You answer questions ONLY using the provided context sections. ` +
 	`Cite sources as filename#anchor. ` +
