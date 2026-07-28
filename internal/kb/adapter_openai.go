@@ -45,6 +45,8 @@ func openAIOptions(apiKey, baseURL string) []option.RequestOption {
 // which proved unreliable across English, Chinese, and weak-model phrasings.
 const ungroundedSentinel = "[UNGROUNDED]"
 
+const embeddingBatchSize = 32
+
 // ungroundedPattern matches the sentinel tolerantly. A weak model asked for an
 // exact token does not reliably produce one: llama3.1:8b emitted [UNEQUIPPED]
 // for a refusal, which an exact prefix match missed, so the refusal was reported
@@ -99,6 +101,19 @@ func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Sect
 }
 
 func (o *OpenAIClient) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	vectors := make([][]float32, 0, len(texts))
+	for start := 0; start < len(texts); start += embeddingBatchSize {
+		end := min(start+embeddingBatchSize, len(texts))
+		batch, err := o.embedBatch(ctx, texts[start:end])
+		if err != nil {
+			return nil, fmt.Errorf("openai embed batch %d: %w", start/embeddingBatchSize+1, err)
+		}
+		vectors = append(vectors, batch...)
+	}
+	return vectors, nil
+}
+
+func (o *OpenAIClient) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
 	response, err := o.embedClient.Embeddings.New(ctx, openai.EmbeddingNewParams{
 		Input: openai.EmbeddingNewParamsInputUnion{
 			OfArrayOfStrings: texts,
