@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(~/go/bin/sqlc generate *)"
+      "Bash(~/go/bin/sqlc generate *)",
+      "Read(//c/Protech/wpf-replay/**)",
+      "Bash(python -c ' *)"
     ]
   }
 }

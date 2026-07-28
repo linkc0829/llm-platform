@@ -8,3 +8,4 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.POST("/index", h.index)
 	rg.POST("/chat", h.chat)
 }
+
