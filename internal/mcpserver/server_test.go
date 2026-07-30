@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -119,6 +120,85 @@ func TestSearchKBReturnsToolErrors(t *testing.T) {
 func TestSearchKBRejectsEmptyQuery(t *testing.T) {
 	ctx := context.Background()
 	session := connect(t, New(&fakeSearcher{errForEmpty: true}, zap.NewNop()))
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_kb", Arguments: map[string]any{"query": ""}})
+	if err != nil {
+		t.Fatalf("CallTool(search_kb) error = %v, want nil", err)
+	}
+	if !result.IsError {
+		t.Error("CallTool(search_kb) IsError = false, want true for an empty query")
+	}
+}
+
+func TestStreamableHTTPServerExposesSearchKB(t *testing.T) {
+	ctx := context.Background()
+	searcher := &fakeSearcher{answer: kb.NewAnswer("Use Settings.", []kb.Citation{kb.NewCitation("settings.md", "printer")}, "hybrid", nil, true), sessionID: "next-session"}
+	httpServer := httptest.NewServer(NewStreamableHTTPHandler(searcher, zap.NewNop()))
+	t.Cleanup(httpServer.Close)
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "http-test", Version: "v1"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: httpServer.URL}, nil)
+	if err != nil {
+		t.Fatalf("Client.Connect() error = %v, want nil", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	tools, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools() error = %v, want nil", err)
+	}
+	if len(tools.Tools) != 1 || tools.Tools[0].Name != "search_kb" {
+		t.Fatalf("ListTools() = %#v, want only search_kb", tools.Tools)
+	}
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_kb", Arguments: map[string]any{"query": "How do I configure a printer?"}})
+	if err != nil {
+		t.Fatalf("CallTool(search_kb) error = %v, want nil", err)
+	}
+	if result.IsError {
+		t.Fatal("CallTool(search_kb) IsError = true, want false")
+	}
+	got, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("CallTool(search_kb) structured content = %T, want map[string]any", result.StructuredContent)
+	}
+	if got["answer"] != "Use Settings." || got["grounded"] != true {
+		t.Errorf("CallTool(search_kb) structured content = %#v, want grounded Use Settings answer", got)
+	}
+}
+
+func TestStreamableHTTPServerReturnsToolErrors(t *testing.T) {
+	ctx := context.Background()
+	httpServer := httptest.NewServer(NewStreamableHTTPHandler(&fakeSearcher{err: kb.ErrNotIndexed}, zap.NewNop()))
+	t.Cleanup(httpServer.Close)
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "http-test", Version: "v1"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: httpServer.URL}, nil)
+	if err != nil {
+		t.Fatalf("Client.Connect() error = %v, want nil", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_kb", Arguments: map[string]any{"query": "Where is the report?"}})
+	if err != nil {
+		t.Fatalf("CallTool(search_kb) error = %v, want nil", err)
+	}
+	if !result.IsError {
+		t.Error("CallTool(search_kb) IsError = false, want true for an unavailable index")
+	}
+}
+
+func TestStreamableHTTPServerRejectsEmptyQuery(t *testing.T) {
+	ctx := context.Background()
+	httpServer := httptest.NewServer(NewStreamableHTTPHandler(&fakeSearcher{errForEmpty: true}, zap.NewNop()))
+	t.Cleanup(httpServer.Close)
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "http-test", Version: "v1"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: httpServer.URL}, nil)
+	if err != nil {
+		t.Fatalf("Client.Connect() error = %v, want nil", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_kb", Arguments: map[string]any{"query": ""}})
 	if err != nil {

@@ -20,9 +20,9 @@ go run ./cmd/kb
 In another terminal:
 
 ```powershell
-Invoke-RestMethod -Method Post -Uri http://localhost:8080/index
+Invoke-RestMethod -Method Post -Uri http://localhost:12598/index
 
-Invoke-RestMethod -Method Post -Uri http://localhost:8080/chat `
+Invoke-RestMethod -Method Post -Uri http://localhost:12598/chat `
   -ContentType "application/json" `
   -Body '{"query":"登入畫面有哪些按鈕?"}' |
   ConvertTo-Json -Depth 5
@@ -33,6 +33,7 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8080/chat `
 - `GET /health` - health check.
 - `POST /index` - parses all Markdown below `docs/`, writes `.kb/index.json`, and loads the in-memory index.
 - `POST /chat` - answers a question from indexed sections only, returning `answer`, `grounded`, `sources`, `images`, `strategy`, and `session_id`. `grounded` is `false` when retrieval fell below threshold or the model declined to answer despite context — branch on it instead of parsing the answer text.
+- `/mcp` - Streamable HTTP MCP endpoint exposing the read-only `search_kb` tool.
 
 ## MCP for coding agents
 
@@ -43,10 +44,10 @@ Import a bundle and build the index before starting it:
 ```powershell
 make import TEAM=Store.POS FROM=C:\Protech\wpf-replay\kb
 go run ./cmd/kb
-# In another terminal: Invoke-RestMethod -Method Post -Uri http://localhost:8080/index
+# In another terminal: Invoke-RestMethod -Method Post -Uri http://localhost:12598/index
 ```
 
-Then configure the agent to run `go run ./cmd/kbmcp` from this repository. For example:
+For a manual local start, run `make mcp`. Then configure the agent to run `go run ./cmd/kbmcp` from this repository. For example:
 
 ```json
 {
@@ -61,6 +62,25 @@ Then configure the agent to run `go run ./cmd/kbmcp` from this repository. For e
 ```
 
 The same stdio command shape is supported by Codex, Claude Code, and Cline; place it in that client's MCP configuration file. MCP does not rebuild the index or expose the HTTP endpoints.
+
+### Shared intranet server
+
+Run `cmd/kb` on the central host after importing and indexing its knowledge base. Its MCP endpoint is `http://192.168.17.139:12598/mcp`; configure OpenCode 1.1.34 or later with:
+
+```jsonc
+{
+  "mcp": {
+    "knowledge_base": {
+      "type": "remote",
+      "url": "http://192.168.17.139:12598/mcp",
+      "enabled": true,
+      "timeout": 60000
+    }
+  }
+}
+```
+
+Allow TCP port 12598 only from approved company network ranges in Windows Firewall. This service has no application-layer authentication: `/health`, `/index`, `/chat`, and `/mcp` are all reachable by any permitted network client.
 
 ### Test the server with MCP Inspector
 
@@ -87,7 +107,7 @@ Drop `--cli` to open the browser UI instead: `npx @modelcontextprotocol/inspecto
 
 Environment variables:
 
-- `APP_PORT` - HTTP port, default `8080`.
+- `APP_PORT` - HTTP port, default `12598`.
 - `APP_SHUTDOWN_TIMEOUT` - graceful shutdown timeout, default `10s`.
 - `LOG_LEVEL` - zap log level, default `info`.
 - `LOG_ENCODING` - zap encoding, default `json`.
@@ -102,7 +122,7 @@ Environment variables:
 
 ```powershell
 make import TEAM=Store.POS FROM=C:\Protech\wpf-replay\kb
-Invoke-RestMethod -Method Post -Uri http://localhost:8080/index
+Invoke-RestMethod -Method Post -Uri http://localhost:12598/index
 ```
 
 Imported files live below `docs/<team>/`; screenshots are copied below that team's `_assets/` directory. `images` in `/chat` are paths relative to `KB_DOCS_DIR`, so they only resolve on a machine that has run the import — they are identifiers, not URLs a client can fetch.
@@ -139,6 +159,7 @@ eval/<team>/             # bundle eval YAML and kb_index.json
 
 ```powershell
 make run      # run ./cmd/kb
+make mcp      # run the stdio MCP server
 make build    # build bin/kb and bin/kbmcp
 make import   # import a team bundle
 make test     # go test -race -short -count=1 ./...

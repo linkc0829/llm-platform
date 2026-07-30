@@ -65,7 +65,7 @@ func newViper() *viper.Viper {
 	v.SetDefault("app.env", "development")
 	v.SetDefault("app.name", "knowledge-base-qa-bot")
 	v.SetDefault("app.shutdown_timeout", "10s")
-	v.SetDefault("http.port", 8080)
+	v.SetDefault("http.port", 12598)
 	v.SetDefault("logger.level", "info")
 	v.SetDefault("logger.encoding", "json")
 	v.SetDefault("openai.llm_mode", "openai")

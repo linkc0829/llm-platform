@@ -9,8 +9,11 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/bootstrap"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
+	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/mcpserver"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/config"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/httpserver"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/logger"
@@ -50,6 +53,10 @@ func main() {
 
 	engine := httpserver.New(lg)
 	kb.RegisterRoutes(engine.Group(""), h)
+	mcpHandler := mcpserver.NewStreamableHTTPHandler(svc, lg)
+	engine.GET("/mcp", gin.WrapH(mcpHandler))
+	engine.POST("/mcp", gin.WrapH(mcpHandler))
+	engine.DELETE("/mcp", gin.WrapH(mcpHandler))
 
 	srv := httpserver.Wrap(engine, httpserver.Config{Port: cfg.HTTP.Port}, lg)
 
