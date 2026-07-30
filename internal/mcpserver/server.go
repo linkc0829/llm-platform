@@ -4,6 +4,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.uber.org/zap"
@@ -57,6 +58,15 @@ func New(svc searcher, log *zap.Logger) *mcp.Server {
 		return nil, out, nil
 	})
 	return server
+}
+
+// NewStreamableHTTPHandler exposes the same read-only server over the MCP
+// Streamable HTTP transport.
+func NewStreamableHTTPHandler(svc searcher, log *zap.Logger) http.Handler {
+	server := New(svc, log)
+	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+		return server
+	}, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 }
 
 func toSearchOutput(answer kb.Answer, sessionID string) SearchOutput {
