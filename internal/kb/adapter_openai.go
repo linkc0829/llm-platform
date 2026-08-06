@@ -12,22 +12,27 @@ import (
 
 // OpenAIClient implements LLM and Embedder.
 type OpenAIClient struct {
-	client      openai.Client
-	embedClient openai.Client
-	chatModel   openai.ChatModel
-	embedModel  openai.EmbeddingModel
+	client              openai.Client
+	embedClient         openai.Client
+	chatModel           openai.ChatModel
+	embedModel          openai.EmbeddingModel
+	geminiThinkingLevel string
 }
 
-func NewOpenAIClient(apiKey, baseURL, embedBaseURL, chatModel, embedModel string) *OpenAIClient {
+func NewOpenAIClient(apiKey, baseURL, embedBaseURL, embedAPIKey, geminiThinkingLevel, chatModel, embedModel string) *OpenAIClient {
 	opts := openAIOptions(apiKey, baseURL)
 	if embedBaseURL == "" {
 		embedBaseURL = baseURL
 	}
+	if embedAPIKey == "" {
+		embedAPIKey = apiKey
+	}
 	return &OpenAIClient{
-		client:      openai.NewClient(opts...),
-		embedClient: openai.NewClient(openAIOptions(apiKey, embedBaseURL)...),
-		chatModel:   openai.ChatModel(chatModel),
-		embedModel:  openai.EmbeddingModel(embedModel),
+		client:              openai.NewClient(opts...),
+		embedClient:         openai.NewClient(openAIOptions(embedAPIKey, embedBaseURL)...),
+		chatModel:           openai.ChatModel(chatModel),
+		embedModel:          openai.EmbeddingModel(embedModel),
+		geminiThinkingLevel: geminiThinkingLevel,
 	}
 }
 
@@ -76,8 +81,26 @@ const groundingSystem = `You answer questions ONLY using the provided context se
 	`Cite sources as filename#anchor. ` +
 	`Only sections tagged evidence: procedure or procedure_visual may support an action order, steps, or sequence. ` +
 	`Sections tagged ui_inventory, procedure_unlabeled, procedure_inferred, or general cannot support steps or sequence. ` +
+	// The restriction above is about steps only, but the model kept generalising it into
+	// "ui_inventory cannot answer anything": a retrieval probe found 47 of 52 refusals had
+	// the right section in the top 3, most of them button-location questions answered by
+	// ui_inventory. Say affirmatively what ui_inventory IS for, or the guardrail silently
+	// suppresses the questions that section type exists to answer.
+	`ui_inventory sections are the authoritative record of which controls a screen contains: ` +
+	`when the question asks whether a control exists, what a screen contains, or which screen ` +
+	`a control appears on, answer it directly from them — that is an inventory question, ` +
+	`not a step or sequence question, and the steps-only restriction above does not apply. ` +
+	`Reply in the same language as the question. ` +
 	`A procedure_visual section is a coordinate-and-screenshot visual review, not a UIA-resolved control; identify it as visual evidence when relying on it. ` +
 	`A procedure_unlabeled section proves only that a click occurred, never which control was clicked. ` +
+	// Refuse on absence, not on wording. The model kept quoting the correct answer and
+	// then declining: asked which API 點餐 calls, it printed POST /terminal/v1/order and
+	// added "but the context does not explicitly define which one 點餐 itself maps to".
+	// Reciting the verified symbol proves the evidence arrived; withholding it afterwards
+	// is not caution, it is a wrong answer. This must not loosen must_not_infer — the
+	// condition is that the answer is PRESENT, which says nothing about inventing one.
+	`If the context contains a concrete answer — the symbol, endpoint, screen name, or method the question asks for — state it, even when the context does not repeat the question's own wording. ` +
+	`Do not refuse on the grounds that a mapping is "not explicitly defined" while the context in fact supplies it; refuse when the answer is absent, never when it is present but phrased differently. ` +
 	`Whenever you cannot answer the question from the context — the context is unrelated to the question, or it only lists controls while the question asks for operation steps or order the knowledge base does not record — begin your reply with the exact token ` + ungroundedSentinel + ` followed by a brief reason, and never invent or infer steps.`
 
 func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Section, history []Turn) (string, error) {
@@ -87,10 +110,16 @@ func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Sect
 	}
 	messages = append(messages, openai.UserMessage(groundedPrompt(query, sections)))
 
-	completion, err := o.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+	params := openai.ChatCompletionNewParams{
 		Messages: messages,
 		Model:    o.chatModel,
-	})
+	}
+	if o.geminiThinkingLevel != "" {
+		params.SetExtraFields(map[string]any{"extra_body": map[string]any{
+			"google": map[string]any{"thinking_config": map[string]string{"thinking_level": o.geminiThinkingLevel}},
+		}})
+	}
+	completion, err := o.client.Chat.Completions.New(ctx, params)
 	if err != nil {
 		return "", fmt.Errorf("openai chat: %w", err)
 	}
