@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // service is the local inbound interface the handler depends on.
@@ -17,10 +18,13 @@ type service interface {
 }
 
 type Handler struct {
-	svc service
+	svc    service
+	logger *zap.Logger
 }
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *Service, logger *zap.Logger) *Handler {
+	return &Handler{svc: svc, logger: logger}
+}
 
 func (h *Handler) health(c *gin.Context) {
 	c.JSON(http.StatusOK, HealthResponse{Status: "ok"})
@@ -52,6 +56,13 @@ func (h *Handler) chat(c *gin.Context) {
 
 	answer, sessionID, metrics, err := h.svc.ChatWithMetrics(ctx, req.Query, req.SessionID)
 	if err != nil {
+		if h.logger != nil && !errors.Is(err, ErrEmptyQuery) && !errors.Is(err, ErrNotIndexed) {
+			h.logger.Error("chat failed",
+				zap.Error(err),
+				zap.String("query", req.Query),
+				zap.String("request_id", c.GetString("request_id")),
+			)
+		}
 		writeError(c, err)
 		return
 	}

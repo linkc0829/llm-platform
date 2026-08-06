@@ -31,7 +31,14 @@ const (
 	// into smaller chunks, grew back when bodies gained Chinese context), so
 	// treat it as a property of the current data, not a constant — re-measure.
 	minThreshold = 1.2
-	topK         = 3
+	// Measured, not guessed. A module overview holds one section per screen, so a
+	// button-location question needs the section for that specific screen — and the
+	// section-level probe over 22 refusals found it at rank 3 for only 3 of them:
+	// top-3=3, top-5=17, top-8=20, top-10=22, absent from the 20 candidates=0.
+	// At 3 the answer was in the candidate set every time and cut before the model
+	// saw it, which reads as the model refusing when it is retrieval trimming.
+	// Re-measure with `-tags retrievalprobe` after any chunking change.
+	topK         = 8
 	candidateK   = 20
 	rrfK         = 60
 	cosineMin    = 0.30

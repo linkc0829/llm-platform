@@ -49,7 +49,7 @@ func main() {
 			lg.Sugar().Fatalf("load index: %v", err)
 		}
 	}
-	h := kb.NewHandler(svc)
+	h := kb.NewHandler(svc, lg)
 
 	engine := httpserver.New(lg)
 	kb.RegisterRoutes(engine.Group(""), h)

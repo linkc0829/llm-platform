@@ -115,8 +115,77 @@ Environment variables:
 - `KB_LLM_MODE` - `openai` or `fake`, default `openai`.
 - `OPENAI_BASE_URL` - OpenAI-compatible endpoint for chat and embeddings. Point it at a local Ollama (`http://localhost:11434/v1`) to keep the corpus off the network.
 - `KB_EMBED_BASE_URL` - optional separate endpoint for embeddings; falls back to `OPENAI_BASE_URL`.
+- `KB_EMBED_API_KEY` - optional API key for embeddings; defaults to `OPENAI_API_KEY` when unset.
+- `KB_GEMINI_THINKING_LEVEL` - optional Gemini OpenAI-compatible thinking level; set `minimal` to disable Gemma 4 thinking.
 - `KB_CHAT_MODEL` / `KB_EMBED_MODEL` - chat and embedding model names (e.g. `llama3.1:8b` / `snowflake-arctic-embed2`).
 - `KB_DOCS_DIR` / `KB_INDEX_DIR` - source and local index directories.
+
+## Retrieval
+
+Two-way recall, fused, then truncated. There is no reranking stage.
+
+```text
+query ─┬─ BM25          → top candidateK (20)
+       └─ vector cosine → top candidateK (20)
+                ↓
+           FuseRRF (rrfK 60)
+                ↓
+       topSections(..., topK)  → sent to the model
+```
+
+The knobs are constants in `internal/kb/service.go`, not environment variables — changing
+one means a rebuild **and a service restart**, and a stale binary silently reports the old
+behaviour as if the change had no effect.
+
+RRF fuses by *rank*, never by content. Two sections of the same document at ranks 3 and 4
+are indistinguishable to it, so the only lever for "the answering section ranked 6th" is a
+larger `topK`. Measure before turning it:
+
+```powershell
+$env:KB_RETRIEVAL_PROBE_EVAL_OUT="eval_out.json"
+go test ./internal/kb/ -tags retrievalprobe -run TestRetrievalProbe -v
+```
+
+The probe reports, per question, the rank at which a retrieved section actually contains
+the answer term — distinct from the older file-level metric, which only says the expected
+*document* ranked and once led to a wrong "the model is refusing" diagnosis.
+
+### When a reranker becomes worth adding
+
+`topK` trades context for recall, and both sides have a cost. Measured on 246 questions
+over the WPF POS corpus (266 sections):
+
+| topK | outcome |
+|------|---------|
+| 3 | answering section in the top 3 for only 3 of 22 refusals; A1 5/9, A2 145/173 |
+| 8 | covers 20 of 22; A1 9/9, A2 166–169/173 — but ~2.7x the context per query |
+| 10 | covers 22 of 22; diminishing returns, more dilution |
+
+Raising it is not free: with `topK=8` one question began refusing *because* of the extra
+context — the model saw fragments from several screens and concluded the list was
+incomplete. That was fixed in the data (the module overview now enumerates its screens in
+one self-contained sentence), not by tuning `topK`.
+
+A reranker resolves that trade-off: recall wide (20), rerank by query-passage relevance,
+send only the best 3. Consider it when any of these hold:
+
+- **Context cost or latency starts to bite.** `topK=8` is roughly 2.7x the tokens of 3, per
+  request, forever.
+- **`topK` has to keep growing.** More modules and screens mean more sections competing;
+  if the section-level probe starts needing 12–15, that is a ranking problem, not a
+  truncation one.
+- **Dilution regressions appear.** More than an isolated case of "the model refuses when
+  given more context" means the ranking, not the budget, is what needs fixing.
+
+It is not the answer when failures are a question/data-model mismatch. One current A3
+failure retrieves the correct document and quotes its buttons, then refuses because the
+question asks for a *per-module* control list while canonical `ui_inventory` documents are
+deduplicated across modules by design. No amount of reranking changes that.
+
+Cost of adding one: another model call per query (latency, spend, one more key to manage),
+and `minThreshold` / `cosineMin` need re-measuring against the new ordering. The
+section-level probe above is the instrument to judge whether it paid off — have it in place
+before, not after.
 
 ## Import a team bundle
 

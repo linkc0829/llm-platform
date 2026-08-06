@@ -21,7 +21,7 @@ func TestLoadKBReadsEnvFileAliases(t *testing.T) {
 	}()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY='test-key'\nAPP_PORT=9090\nKB_CHAT_MODEL=test-model\nKB_EMBED_BASE_URL=http://embed.example/v1\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY='test-key'\nAPP_PORT=9090\nKB_CHAT_MODEL=test-model\nKB_EMBED_BASE_URL=http://embed.example/v1\nKB_EMBED_API_KEY=embed-key\nKB_GEMINI_THINKING_LEVEL=minimal\n"), 0o600); err != nil {
 		t.Fatalf("write .env: %v", err)
 	}
 	if err := os.Chdir(dir); err != nil {
@@ -43,6 +43,12 @@ func TestLoadKBReadsEnvFileAliases(t *testing.T) {
 	}
 	if cfg.OpenAI.EmbedBaseURL != "http://embed.example/v1" {
 		t.Fatalf("OpenAI embed base URL = %q, want test URL", cfg.OpenAI.EmbedBaseURL)
+	}
+	if cfg.OpenAI.EmbedAPIKey != "embed-key" {
+		t.Fatalf("OpenAI embed API key = %q, want embed-key", cfg.OpenAI.EmbedAPIKey)
+	}
+	if cfg.OpenAI.GeminiThinkingLevel != "minimal" {
+		t.Fatalf("Gemini thinking level = %q, want minimal", cfg.OpenAI.GeminiThinkingLevel)
 	}
 }
 
