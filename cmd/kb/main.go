@@ -27,7 +27,7 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	lg, err := logger.New(logger.Config{Level: cfg.Logger.Level, Encoding: cfg.Logger.Encoding})
+	lg, err := logger.New(logger.Config{Level: cfg.Logger.Level, Encoding: cfg.Logger.Encoding, Output: cfg.Logger.Output})
 	if err != nil {
 		log.Fatalf("logger: %v", err)
 	}

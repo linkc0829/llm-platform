@@ -21,10 +21,10 @@ build: ## Build kb binary
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/kb
 	go build -o $(BUILD_DIR)/kbmcp ./cmd/kbmcp
 
-run: ## Run kb locally
+run: ## Run kb locally (HTTP API + /mcp endpoint)
 	go run ./cmd/kb
 
-mcp: ## Run the stdio MCP server
+mcp: ## Run the stdio MCP server (dev / Inspector; prefer make run)
 	go run ./cmd/kbmcp
 
 import: ## Import a team bundle: make import TEAM=X FROM=Y

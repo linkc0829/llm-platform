@@ -17,6 +17,7 @@ coverage.html
 
 # Generated knowledge-base index (rebuilt by POST /index; holds a full copy of docs/)
 .kb/
+log/
 docs/.kbimport-*/
 eval/.kbimport-*/
 *.bak/
@@ -45,3 +46,4 @@ run_eval.py
 eval_out.json
 .claude/
 .agents/
+
