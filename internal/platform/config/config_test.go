@@ -127,3 +127,37 @@ func TestLoadKBAllowsFakeLLMWithoutAPIKey(t *testing.T) {
 		t.Fatalf("OpenAI LLM mode = %q, want fake", cfg.OpenAI.LLMMode)
 	}
 }
+
+// TestLoadKBDefaultsLoggerOutputToFile pins the default that makes the metric
+// log exist at all. A typo in the viper key would leave Output empty, the logger
+// would fall back to stdout only, and the absence would look exactly like a
+// service nobody queried — so assert the default rather than trust the string.
+func TestLoadKBDefaultsLoggerOutputToFile(t *testing.T) {
+	unsetEnv(t, "LOG_OUTPUT")
+	unsetEnv(t, "OPENAI_API_KEY")
+	unsetEnv(t, "KB_LLM_MODE")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(cwd)
+	}()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("KB_LLM_MODE=fake\n"), 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	cfg, err := LoadKB()
+	if err != nil {
+		t.Fatalf("LoadKB: %v", err)
+	}
+	if cfg.Logger.Output != "stdout,log/kb.log" {
+		t.Errorf("Logger.Output = %q, want stdout,log/kb.log", cfg.Logger.Output)
+	}
+}

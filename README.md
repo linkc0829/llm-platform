@@ -37,9 +37,18 @@ Invoke-RestMethod -Method Post -Uri http://localhost:12598/chat `
 
 ## MCP for coding agents
 
-`kbmcp` is a local stdio MCP server. It exposes one read-only tool, `search_kb`, with a required `query` and optional `session_id`. It returns the answer, an explicit `grounded` boolean, session ID, citations, image paths, and retrieval strategy. `grounded` lets an agent decide programmatically whether the KB answered, without parsing refusal prose — it is `false` when retrieval fell short or the model declined to answer despite context.
+One read-only tool, `search_kb`, with a required `query` and optional `session_id`. It returns the answer, an explicit `grounded` boolean, session ID, citations, image paths, and retrieval strategy. `grounded` lets an agent decide programmatically whether the KB answered, without parsing refusal prose — it is `false` when retrieval fell short or the model declined to answer despite context.
 
-Import a bundle and build the index before starting it:
+The same tool is served over two transports, backed by the same service and index:
+
+| Transport | Binary | When |
+| --- | --- | --- |
+| Streamable HTTP, `/mcp` | `cmd/kb` (`make run`) | **Default.** One process, one index in memory, one query log |
+| stdio | `cmd/kbmcp` (`make mcp`) | Development, MCP Inspector, or a client that cannot speak Streamable HTTP |
+
+Prefer HTTP. Each stdio client spawns its own process with its own copy of the index, and its queries land in a separate log file, which makes the metrics in `log/kb.log` incomplete.
+
+Import a bundle and build the index before starting either one:
 
 ```powershell
 make import TEAM=Store.POS FROM=C:\Protech\wpf-replay\kb
@@ -47,23 +56,7 @@ go run ./cmd/kb
 # In another terminal: Invoke-RestMethod -Method Post -Uri http://localhost:12598/index
 ```
 
-For a manual local start, run `make mcp`. Then configure the agent to run `go run ./cmd/kbmcp` from this repository. For example:
-
-```json
-{
-  "mcpServers": {
-    "knowledge-base": {
-      "command": "go",
-      "args": ["run", "./cmd/kbmcp"],
-      "cwd": "C:\\path\\to\\knowledge-base-qa-bot"
-    }
-  }
-}
-```
-
-The same stdio command shape is supported by Codex, Claude Code, and Cline; place it in that client's MCP configuration file. MCP does not rebuild the index or expose the HTTP endpoints.
-
-### Shared intranet server
+### Shared intranet server (default)
 
 Run `cmd/kb` on the central host after importing and indexing its knowledge base. Its MCP endpoint is `http://192.168.17.139:12598/mcp`; configure OpenCode 1.1.34 or later with:
 
@@ -81,6 +74,24 @@ Run `cmd/kb` on the central host after importing and indexing its knowledge base
 ```
 
 Allow TCP port 12598 only from approved company network ranges in Windows Firewall. This service has no application-layer authentication: `/health`, `/index`, `/chat`, and `/mcp` are all reachable by any permitted network client.
+
+### Local stdio server (development)
+
+`make mcp` runs `cmd/kbmcp`, the stdio transport of the same server. Use it when driving MCP Inspector (below), or for a client that only accepts a `command`. Point the client at this repository:
+
+```json
+{
+  "mcpServers": {
+    "knowledge-base": {
+      "command": "go",
+      "args": ["run", "./cmd/kbmcp"],
+      "cwd": "C:\\path\\to\\knowledge-base-qa-bot"
+    }
+  }
+}
+```
+
+The same stdio command shape is supported by Codex, Claude Code, and Cline; place it in that client's MCP configuration file. MCP does not rebuild the index or expose the HTTP endpoints.
 
 ### Test the server with MCP Inspector
 
@@ -110,7 +121,8 @@ Environment variables:
 - `APP_PORT` - HTTP port, default `12598`.
 - `APP_SHUTDOWN_TIMEOUT` - graceful shutdown timeout, default `10s`.
 - `LOG_LEVEL` - zap log level, default `info`.
-- `LOG_ENCODING` - zap encoding, default `json`.
+- `LOG_ENCODING` - zap encoding, default `json`. The `jq` recipes for the query log assume `json`.
+- `LOG_OUTPUT` - comma-separated log sinks, default `stdout,log/kb.log`. Missing directories are created. Set `stdout` alone to stop writing files. `cmd/kbmcp` drops any `stdout` sink regardless: its stdout carries the JSON-RPC protocol.
 - `OPENAI_API_KEY` - required unless `KB_LLM_MODE=fake`, or when `OPENAI_BASE_URL` points at a keyless endpoint (e.g. Ollama).
 - `KB_LLM_MODE` - `openai` or `fake`, default `openai`.
 - `OPENAI_BASE_URL` - OpenAI-compatible endpoint for chat and embeddings. Point it at a local Ollama (`http://localhost:11434/v1`) to keep the corpus off the network.
@@ -227,8 +239,8 @@ eval/<team>/             # bundle eval YAML and kb_index.json
 ## Make Targets
 
 ```powershell
-make run      # run ./cmd/kb
-make mcp      # run the stdio MCP server
+make run      # run ./cmd/kb (HTTP API + /mcp endpoint)
+make mcp      # run the stdio MCP server (dev / Inspector only)
 make build    # build bin/kb and bin/kbmcp
 make import   # import a team bundle
 make test     # go test -race -short -count=1 ./...

@@ -26,7 +26,15 @@ func main() {
 	}
 
 	// stderr, never stdout: stdout carries the JSON-RPC protocol on this transport.
-	lg, err := logger.New(logger.Config{Level: cfg.Logger.Level, Encoding: cfg.Logger.Encoding, Output: "stderr"})
+	// WithoutStdout enforces that even if LOG_OUTPUT says otherwise.
+	output := logger.WithoutStdout(cfg.Logger.Output)
+	if os.Getenv("LOG_OUTPUT") == "" {
+		// Own file rather than the shared default: this server and the HTTP one
+		// commonly run at the same time, and one file written by two processes
+		// is harder to reason about than two files jq can read together.
+		output = "stderr,log/kb-mcp.log"
+	}
+	lg, err := logger.New(logger.Config{Level: cfg.Logger.Level, Encoding: cfg.Logger.Encoding, Output: output})
 	if err != nil {
 		fatal(err)
 	}

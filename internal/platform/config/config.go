@@ -30,6 +30,7 @@ type HTTPConfig struct {
 type LoggerConfig struct {
 	Level    string `mapstructure:"level"`
 	Encoding string `mapstructure:"encoding"`
+	Output   string `mapstructure:"output"`
 }
 
 type OpenAIConfig struct {
@@ -70,6 +71,10 @@ func newViper() *viper.Viper {
 	v.SetDefault("http.port", 12598)
 	v.SetDefault("logger.level", "info")
 	v.SetDefault("logger.encoding", "json")
+	// Writes to a file by default. The kb_query / llm_usage lines are the only
+	// record of what the KB was asked, and a day not captured cannot be
+	// recovered — opt-out (LOG_OUTPUT=stdout) is cheaper than a silent gap.
+	v.SetDefault("logger.output", "stdout,log/kb.log")
 	v.SetDefault("openai.llm_mode", "openai")
 	v.SetDefault("openai.chat_model", "gpt-4o-mini")
 	v.SetDefault("openai.embed_model", "text-embedding-3-small")
@@ -86,6 +91,7 @@ func newViper() *viper.Viper {
 		"http.port":                    "APP_PORT",
 		"logger.level":                 "LOG_LEVEL",
 		"logger.encoding":              "LOG_ENCODING",
+		"logger.output":                "LOG_OUTPUT",
 		"openai.api_key":               "OPENAI_API_KEY",
 		"openai.llm_mode":              "KB_LLM_MODE",
 		"openai.base_url":              "OPENAI_BASE_URL",
