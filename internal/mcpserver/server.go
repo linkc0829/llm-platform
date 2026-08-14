@@ -40,7 +40,7 @@ func New(svc searcher, log *zap.Logger) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "knowledge-base-qa-bot", Version: "v1"}, nil)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search_kb",
-		Description: "Search the local knowledge base and return a grounded answer with citations.",
+		Description: "Search the Store.POS knowledge base: UI operation procedures (login, checkout, void, reprint, reports), screen names, and the verified ViewModel / command / HTTP endpoint behind each action. Call this BEFORE answering any question about this POS app's screens, operation steps, or which API an action calls — do not answer from memory. Check the grounded field: when it is false the knowledge base did not cover the question, so say so instead of guessing.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
 		answer, sessionID, _, err := svc.ChatWithMetrics(ctx, input.Query, input.SessionID)
 		if err != nil {

@@ -6,6 +6,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 type fakeSectionStore struct {
@@ -533,14 +537,6 @@ func mustSampleSections(t *testing.T) []Section {
 	return sections
 }
 
-func citationStrings(citations []Citation) []string {
-	out := make([]string, 0, len(citations))
-	for _, citation := range citations {
-		out = append(out, citation.String())
-	}
-	return out
-}
-
 func sameStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -560,4 +556,41 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestServiceChatLogsEveryQuery pins the query log down because it is write-only
+// in production: nothing reads it back, so if the line stops being emitted —
+// a refactor of record(), a caller added that bypasses it — every downstream
+// consumer just sees an empty file and reads it as "no refusals". Both an
+// answered and a denied query must appear, since the denied ones are the whole
+// point of keeping the log.
+func TestServiceChatLogsEveryQuery(t *testing.T) {
+	core, logs := observer.New(zapcore.InfoLevel)
+	defer zap.ReplaceGlobals(zap.New(core))()
+
+	sections := mustSampleSections(t)
+	svc := NewService(&fakeSectionStore{loadSections: sections}, &fakeLLM{answer: "grounded answer"}, nil, nil, NewInProcStore(), "test-model")
+	if err := svc.LoadOnStartup(context.Background()); err != nil {
+		t.Fatalf("Service.LoadOnStartup() error = %v, want nil", err)
+	}
+
+	if _, _, _, err := svc.ChatWithMetrics(context.Background(), "login", "session"); err != nil {
+		t.Fatalf("Service.Chat() error = %v, want nil", err)
+	}
+	if _, _, _, err := svc.ChatWithMetrics(context.Background(), "zzzz", "session"); err != nil {
+		t.Fatalf("Service.Chat() error = %v, want nil", err)
+	}
+
+	entries := logs.FilterMessage("kb_query").All()
+	if len(entries) != 2 {
+		t.Fatalf("kb_query lines = %d, want 2 (one answered, one denied)", len(entries))
+	}
+	for _, want := range []string{"q", "grounded", "strategy", "sources"} {
+		if _, ok := entries[0].ContextMap()[want]; !ok {
+			t.Errorf("kb_query missing field %q, got %v", want, entries[0].ContextMap())
+		}
+	}
+	if got := entries[1].ContextMap()["grounded"]; got != false {
+		t.Errorf("kb_query grounded = %v for an unmatched query, want false — the log is only useful if refusals are marked", got)
+	}
 }

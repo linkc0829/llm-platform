@@ -35,23 +35,73 @@ import (
 // ("01_Login", "02_Main_Menu", ...) no longer occur in any path, so leaving them
 // here silently reported areaHits=0 for every query — retrieval looked dead when
 // only the expectation was stale. Keep these in step with the exporter's layout.
-var probeQueries = []struct{ query, wantArea string }{
-	{"如何執行登入?", "POS/login-procedure.md"},
-	{"如何執行主選單?", "POS/main_menu-procedure.md"},
-	{"如何執行點餐?", "POS/ordering-procedure.md"},
-	{"如何執行套餐點餐?", "POS/set_meal_ordering-procedure.md"},
-	{"如何執行訂單管理?", "POS/order_management-procedure.md"},
-	{"如何執行單據重印?", "POS/receipt_reprint-procedure.md"},
-	{"如何執行作廢?", "POS/void-procedure.md"},
-	{"如何執行營業報表?", "POS/business_reports-procedure.md"},
-	{"如何執行周邊管理?", "POS/peripheral_management-procedure.md"},
-	{"如何結帳?", ""},
-	{"如何用現金付款?", ""},
-	{"如何作廢訂單?", ""},
-	{"如何重印發票?", ""},
-	{"怎麼看營業報表?", ""},
-	{"如何暫存訂單?", ""},
-	{"套餐訂單怎麼點?", ""},
+//
+// The list below is the POS bundle's. Any other bundle needs its own, so set
+// KB_RETRIEVAL_PROBE_QUERIES to a JSON file of [{"query":…,"wantArea":…}] —
+// without that, probing a different corpus means editing this file, and the
+// stale-fixture guard below turns the whole probe into a hard failure.
+type probeQuery struct {
+	Query    string `json:"query"`
+	WantArea string `json:"wantArea"`
+	// WantAnchor names the section that should answer the query. Set it to get
+	// per-channel ranks: the fused list alone cannot tell you whether BM25 or the
+	// vector side is the one failing, and "the file ranked" is not the same as
+	// "the answering section ranked".
+	WantAnchor string `json:"wantAnchor"`
+}
+
+// rankOf reports the 1-based position of the first section whose anchor contains
+// want, or 0 when absent from the list.
+func rankOf(list []ScoredSection, indexed []Section, want string) int {
+	if want == "" {
+		return 0
+	}
+	for i, s := range list {
+		if s.Index >= 0 && s.Index < len(indexed) &&
+			strings.Contains(indexed[s.Index].Anchor(), want) {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+func loadProbeQueries(t *testing.T) []probeQuery {
+	path := os.Getenv("KB_RETRIEVAL_PROBE_QUERIES")
+	if path == "" {
+		return defaultProbeQueries
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read KB_RETRIEVAL_PROBE_QUERIES=%s: %v", path, err)
+	}
+	var out []probeQuery
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s has no queries", path)
+	}
+	t.Logf("probe queries from %s: %d", path, len(out))
+	return out
+}
+
+var defaultProbeQueries = []probeQuery{
+	{Query: "如何執行登入?", WantArea: "POS/login-procedure.md"},
+	{Query: "如何執行主選單?", WantArea: "POS/main_menu-procedure.md"},
+	{Query: "如何執行點餐?", WantArea: "POS/ordering-procedure.md"},
+	{Query: "如何執行套餐點餐?", WantArea: "POS/set_meal_ordering-procedure.md"},
+	{Query: "如何執行訂單管理?", WantArea: "POS/order_management-procedure.md"},
+	{Query: "如何執行單據重印?", WantArea: "POS/receipt_reprint-procedure.md"},
+	{Query: "如何執行作廢?", WantArea: "POS/void-procedure.md"},
+	{Query: "如何執行營業報表?", WantArea: "POS/business_reports-procedure.md"},
+	{Query: "如何執行周邊管理?", WantArea: "POS/peripheral_management-procedure.md"},
+	{Query: "如何結帳?", WantArea: ""},
+	{Query: "如何用現金付款?", WantArea: ""},
+	{Query: "如何作廢訂單?", WantArea: ""},
+	{Query: "如何重印發票?", WantArea: ""},
+	{Query: "怎麼看營業報表?", WantArea: ""},
+	{Query: "如何暫存訂單?", WantArea: ""},
+	{Query: "套餐訂單怎麼點?", WantArea: ""},
 }
 
 func TestRetrievalProbe(t *testing.T) {
@@ -84,26 +134,27 @@ func TestRetrievalProbe(t *testing.T) {
 	// Fail loudly on a stale wantArea. Without this a renamed layout just drives
 	// areaHits to 0, which reads as "retrieval is broken" instead of "the
 	// expectation no longer names a real file".
+	probeQueries := loadProbeQueries(t)
 	for _, tc := range probeQueries {
-		if tc.wantArea == "" {
+		if tc.WantArea == "" {
 			continue
 		}
 		found := false
 		for _, sec := range indexed {
-			if strings.Contains(sec.File(), tc.wantArea) {
+			if strings.Contains(sec.File(), tc.WantArea) {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Fatalf("probeQueries wantArea %q matches no indexed file — update it to the current export layout", tc.wantArea)
+			t.Fatalf("probeQueries wantArea %q matches no indexed file — update it to the current export layout", tc.WantArea)
 		}
 	}
 
 	var stepHits, areaHits, boilerplate, total int
 	for _, tc := range probeQueries {
 		// Mirror Service.chat exactly: same candidate trimming, same fusion, same k.
-		bm25List := corpus.RankBM25(tokenize(tc.query))
+		bm25List := corpus.RankBM25(tokenize(tc.Query))
 		for len(bm25List) > 0 && bm25List[len(bm25List)-1].Score <= 0 {
 			bm25List = bm25List[:len(bm25List)-1]
 		}
@@ -111,10 +162,10 @@ func TestRetrievalProbe(t *testing.T) {
 			bm25List = bm25List[:candidateK]
 		}
 		var vecList []ScoredSection
-		if vectors, err := oai.Embed(ctx, []string{tc.query}); err == nil && len(vectors) > 0 {
+		if vectors, err := oai.Embed(ctx, []string{tc.Query}); err == nil && len(vectors) > 0 {
 			vecList = RankVector(indexed, vecMap, vectors[0], candidateK)
 		} else if err != nil {
-			t.Fatalf("Embed(%q) error = %v — is the embedder reachable?", tc.query, err)
+			t.Fatalf("Embed(%q) error = %v — is the embedder reachable?", tc.Query, err)
 		}
 		ranked := bm25List
 		if len(vecList) > 0 && len(bm25List) > 0 {
@@ -131,7 +182,7 @@ func TestRetrievalProbe(t *testing.T) {
 			if strings.Contains(sec.Anchor(), "步驟") {
 				hitStep = true
 			}
-			if tc.wantArea != "" && strings.Contains(sec.File(), tc.wantArea) {
+			if tc.WantArea != "" && strings.Contains(sec.File(), tc.WantArea) {
 				hitArea = true
 			}
 			// The chunks that currently crowd out real steps.
@@ -146,12 +197,20 @@ func TestRetrievalProbe(t *testing.T) {
 		if hitArea {
 			areaHits++
 		}
-		t.Logf("[step=%-5v area=%-5v] %-22s -> %v", hitStep, hitArea, tc.query, anchors)
+		if tc.WantAnchor != "" {
+			// Unfused ranks: which channel is failing is invisible in the fused list.
+			t.Logf("[bm25=%-3d vec=%-3d fused=%-3d] %s  (want %q, bm25 candidates=%d)",
+				rankOf(bm25List, indexed, tc.WantAnchor),
+				rankOf(vecList, indexed, tc.WantAnchor),
+				rankOf(ranked, indexed, tc.WantAnchor),
+				tc.Query, tc.WantAnchor, len(bm25List))
+		}
+		t.Logf("[step=%-5v area=%-5v] %-22s -> %v", hitStep, hitArea, tc.Query, anchors)
 	}
 
 	areaAsked := 0
 	for _, tc := range probeQueries {
-		if tc.wantArea != "" {
+		if tc.WantArea != "" {
 			areaAsked++
 		}
 	}

@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 
+	"go.uber.org/zap"
+
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 )
@@ -123,6 +125,14 @@ func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Sect
 	if err != nil {
 		return "", fmt.Errorf("openai chat: %w", err)
 	}
+	// Token counts exist only on the response, and the LLM port returns a bare
+	// string — so they are logged here rather than plumbed up through it. Nothing
+	// joins them to a kb_query line; daily sums are what a cost comparison needs.
+	zap.L().Info("llm_usage",
+		zap.String("model", o.chatModel),
+		zap.Int64("prompt_tokens", completion.Usage.PromptTokens),
+		zap.Int64("completion_tokens", completion.Usage.CompletionTokens),
+	)
 	if len(completion.Choices) == 0 {
 		return "", fmt.Errorf("openai chat: no choices returned")
 	}

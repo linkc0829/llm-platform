@@ -10,6 +10,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"go.uber.org/zap"
+
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/bootstrap"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/mcpserver"
@@ -29,6 +31,9 @@ func main() {
 		fatal(err)
 	}
 	defer func() { _ = lg.Sync() }()
+	// The service logs each answered query through zap's global. Without this it
+	// keeps the no-op default and the query log is silently empty.
+	zap.ReplaceGlobals(lg)
 
 	svc := bootstrap.NewKBService(cfg)
 	if err := svc.LoadOnStartup(context.Background()); err != nil {
