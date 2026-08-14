@@ -9,6 +9,11 @@ Repo-level configuration for Claude Code.
   - `new-feature/` — checklist + scaffolder reference for adding a feature
   - `go-hex-antipatterns/` — BAD/GOOD examples for review/refactor
   - `go-hex-recipes/` — recipes for endpoint/dep/cross-feature changes
+  - `ui-kb-validate/` — static checks plus a live `/chat` run of the operational eval
+  - `ui-kb-eng-validate/` — drives the MCP stdio server with the engineering eval,
+    the path a coding agent actually takes
+
+`settings.local.json` is per-machine and stays out of version control.
 
 ## settings.json: scope of the allowlist
 
