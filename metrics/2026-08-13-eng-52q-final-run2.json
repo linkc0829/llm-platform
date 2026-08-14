@@ -1,0 +1,1989 @@
+[
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "帳號權限會打哪支 API?",
+    "expect_any": [
+      "DELETE /v1/store/account/{0}",
+      "GET /v1/auth/publicKey",
+      "GET /v1/store/accounts",
+      "PATCH /v1/store/account/{0}",
+      "POST /v1/store/account"
+    ],
+    "expect_source": "account_permission-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件內容，帳號權限會呼叫的 API 端點如下：\n\n*   GET /v1/store/accounts\n*   PATCH /v1/store/account/{0}\n*   GET /v1/auth/publicKey\n*   DELETE /v1/store/account/{0}\n*   POST /v1/store/account\n\n[Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-engineering-context]",
+    "sources": [
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-clicksave",
+      "Store.POS/ui_inventory/_modules/ADMIN-account_permission-overview.md#帳號權限-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-askdeleteresult",
+      "Store.POS/ui_inventory/_modules/ADMIN-account_permission-overview.md#店家管理人員編輯表單畫面",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-clicksave-2",
+      "Store.POS/ui_inventory/_modules/ADMIN-account_permission-overview.md#店家管理人員列表與明細畫面"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/account_permission/output/account_permission/img/ADMIN-account_permission-F01/ADMIN-account_permission-F01-S01-account_list.jpg"
+    ],
+    "pass": true,
+    "note": "DELETE /v1/store/account/{0}",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "帳號權限是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "StoreAccountAdjustPage",
+      "StoreAccountCreatePage",
+      "StoreAccountPage"
+    ],
+    "expect_source": "account_permission-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "帳號權限的畫面宿主（ViewModel）為 `StoreAccountAdjustPage`、`StoreAccountCreatePage` 與 `StoreAccountPage` [Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-viewmodels]。",
+    "sources": [
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-viewmodels",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-commands",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-操作程序",
+      "Store.POS/playlists/admin_ops-overview.md#1-帳號權限",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-askdeleteresult",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-clicksave-2"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/account_permission/output/account_permission/img/ADMIN-account_permission-F01/ADMIN-account_permission-F01-S01-account_list.jpg"
+    ],
+    "pass": true,
+    "note": "StoreAccountAdjustPage",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "帳號權限的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "addStoreAccount",
+      "askDeleteResult",
+      "clickAdjust",
+      "clickCancel",
+      "clickCreate",
+      "clickDelete",
+      "clickSave",
+      "clickSelect",
+      "clickSwitchMode",
+      "deleteStoreAccount",
+      "getPublicKey",
+      "getRemoteStoreAccounts",
+      "getStoreAccounts",
+      "onFilterChange",
+      "updataStoreAccount",
+      "updateStoreAccount"
+    ],
+    "expect_source": "account_permission-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的上下文，帳號權限涉及多個不同的呼叫鏈，分別對應不同的操作：\n\n*   **clickSave (調整帳號時)**：\n    `StoreAccountAdjustPage.clickSave()` → `AccountBoard.updataStoreAccount()` → `AccountService.updateStoreAccount()` → `AccountApi.updateStoreAccount()` → `PATCH /v1/store/account/{0}` → `UserAuthApi.getPublicKey()` → `GET /v1/auth/pub",
+    "sources": [
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-viewmodels",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-askdeleteresult",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-clicksave-2",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-工程對應-commands",
+      "Store.POS/procedures/ADMIN/account_permission-procedure.md#帳號權限-完整步驟總覽"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/account_permission/output/account_permission/img/ADMIN-account_permission-F01/ADMIN-account_permission-F01-S01-account_list.jpg"
+    ],
+    "pass": true,
+    "note": "addStoreAccount",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "資料同步會打哪支 API?",
+    "expect_any": [
+      "GET /v1/sync/platform",
+      "GET /v1/sync/store",
+      "GET /v1/sync/{0}/status"
+    ],
+    "expect_source": "data_sync-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "資料同步會呼叫以下 API 端點：\n- `GET /v1/sync/store` [Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-engineering-context]\n- `GET /v1/sync/platform` [Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-engineering-context]\n- `GET /v1/sync/{0}/status` [Store.POS/procedures/ADMIN/data_sync-pro",
+    "sources": [
+      "Store.POS/ui_inventory/_modules/ADMIN-data_sync-overview.md#資料同步-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-clicksyncplatform",
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-clicksyncstore",
+      "Store.POS/ui_inventory/_modules/ADMIN-data_sync-overview.md#資料同步主畫面畫面",
+      "Store.POS/ui_inventory/462f6a0167-ui_inventory.md#資料同步主畫面的按鈕",
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-clicksyncstatus",
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-services-apis"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/data_sync/output/data_sync/img/ADMIN-data_sync-F01/ADMIN-data_sync-F01-S01-sync_dashboard.jpg"
+    ],
+    "pass": true,
+    "note": "GET /v1/sync/platform",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "資料同步是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "SyncCheckTab",
+      "SyncCheckViewPage",
+      "SyncPage"
+    ],
+    "expect_source": "data_sync-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件內容，資料同步的 ViewModel 或畫面宿主為：\n\n- `SyncPage`\n- `SyncCheckViewPage`\n- `SyncCheckTab`\n\n(來源：Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-viewmodels)",
+    "sources": [
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-data_sync-overview.md#資料同步主畫面畫面",
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-viewmodels",
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-commands",
+      "Store.POS/ui_inventory/_modules/ADMIN-data_sync-overview.md#資料同步-module-按鈕與畫面索引",
+      "Store.POS/ui_inventory/462f6a0167-ui_inventory.md#資料同步主畫面的輸入欄位",
+      "Store.POS/ui_inventory/462f6a0167-ui_inventory.md#資料同步主畫面-ui-控制項清單",
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-clicksyncstore"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/data_sync/output/data_sync/img/ADMIN-data_sync-F01/ADMIN-data_sync-F01-S01-sync_dashboard.jpg",
+      "Store.POS/_assets/modules/ADMIN/data_sync/screenshots/00_start/001.png"
+    ],
+    "pass": true,
+    "note": "SyncCheckTab",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "資料同步的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "clickBinding",
+      "clickSyncPlatform",
+      "clickSyncStatus",
+      "clickSyncStore",
+      "getSyncStatus",
+      "onFilterChange",
+      "onSelect",
+      "syncToPlatform",
+      "syncToStore"
+    ],
+    "expect_source": "data_sync-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的上下文，資料同步的呼叫鏈經過以下方法：\n\n*   `SyncCheckViewPage.clickSyncStore()` → `SyncApi.syncToStore()` → `GET /v1/sync/store` [Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-clicksyncstore]\n*   `SyncCheckViewPage.clickSyncPlatform()` → `SyncApi.syncToPlatform()` → `GET /v1/sync/platform` [Store.P",
+    "sources": [
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-clicksyncstore",
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-clicksyncplatform",
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-clicksyncstatus",
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-viewmodels",
+      "Store.POS/procedures/ADMIN/data_sync-procedure.md#資料同步-工程對應-commands",
+      "Store.POS/ui_inventory/_modules/ADMIN-data_sync-overview.md#資料同步-module-按鈕與畫面索引"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/data_sync/output/data_sync/img/ADMIN-data_sync-F01/ADMIN-data_sync-F01-S01-sync_dashboard.jpg"
+    ],
+    "pass": true,
+    "note": "clickSyncPlatform",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "折扣參數設定會打哪支 API?",
+    "expect_any": [
+      "GET /v1/discount/common",
+      "PATCH /v1/discount/common"
+    ],
+    "expect_source": "discount_param-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "折扣參數設定會呼叫以下 API 端點：\n- GET /v1/discount/common\n- PATCH /v1/discount/common\n\n[Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-engineering-context]",
+    "sources": [
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-完整步驟總覽",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-clicksave",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_param-overview.md#折扣參數設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-clickabort",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_param-overview.md#折扣參數編輯表單畫面",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-操作程序"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/discount_param/output/discount_param/img/ADMIN-discount_param-F01/ADMIN-discount_param-F01-S01-discount_parameters.jpg"
+    ],
+    "pass": true,
+    "note": "GET /v1/discount/common",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "折扣參數設定是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "DiscountsCommonPage"
+    ],
+    "expect_source": "discount_param-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "折扣參數設定的畫面宿主為 `DiscountsCommonPage` ViewModel [Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-viewmodels]。",
+    "sources": [
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-viewmodels",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_param-overview.md#折扣參數檢視畫面",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-services-apis",
+      "Store.POS/ui_inventory/294a55013f-ui_inventory.md#折扣參數檢視的按鈕",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_param-overview.md#折扣參數編輯表單畫面",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-commands"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/discount_param/output/discount_param/img/ADMIN-discount_param-F01/ADMIN-discount_param-F01-S01-discount_parameters.jpg"
+    ],
+    "pass": true,
+    "note": "DiscountsCommonPage",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "折扣參數設定的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "clickAbort",
+      "clickEdit",
+      "clickSave",
+      "getData",
+      "getDiscountsCommon",
+      "getDiscountscommon",
+      "initData",
+      "updateDiscountsCommon",
+      "updateDiscountscommon"
+    ],
+    "expect_source": "discount_param-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的內容，折扣參數設定的呼叫鏈依功能（`clickAbort` 或 `clickSave`）有不同的方法路徑：\n\n*   **clickAbort 的呼叫鏈**：\n    `DiscountsCommonPage.clickAbort()` → `DiscountsCommonPage.initData()` → `DiscountsCommonPage.getData()` → `DiscountsBoard.getDiscountsCommon()` → `DiscountCommonService.getDiscountsCommon()` → `DiscountsApi.getD",
+    "sources": [
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-完整步驟總覽",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-clickabort",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_param-overview.md#折扣參數設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-clicksave",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_param-overview.md#折扣參數編輯表單畫面",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-viewmodels"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/discount_param/output/discount_param/img/ADMIN-discount_param-F01/ADMIN-discount_param-F01-S01-discount_parameters.jpg"
+    ],
+    "pass": true,
+    "note": "clickAbort",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "折扣設定會打哪支 API?",
+    "expect_any": [
+      "DELETE /v1/discount/setting/{0}",
+      "GET /v1/discount/menu",
+      "GET /v1/discount/setting",
+      "PATCH /v1/discount/setting/{0}",
+      "POST /v1/discount/setting"
+    ],
+    "expect_source": "discount_rule-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "折扣設定會呼叫的 API 端點如下：\n- GET /v1/discount/setting\n- PATCH /v1/discount/setting/{0}\n- DELETE /v1/discount/setting/{0}\n- POST /v1/discount/setting\n- GET /v1/discount/menu\n\n來源：[Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-engineering-context]",
+    "sources": [
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_rule-overview.md#折扣設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_rule-overview.md#折扣活動檢視畫面",
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-clicksave-2",
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-askdeleteresult",
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-完整步驟總覽"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/discount_rule/output/discount_rule/img/ADMIN-discount_rule-F01/ADMIN-discount_rule-F01-S01-discount_rule_list.jpg"
+    ],
+    "pass": true,
+    "note": "DELETE /v1/discount/setting/{0}",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "折扣設定是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "DiscountsMode004Component",
+      "DiscountsMode009Component",
+      "DiscountsMode901Component",
+      "DiscountsMode902Component",
+      "DiscountsSettingAdjustComponent",
+      "DiscountsSettingCreateComponent",
+      "DiscountsSettingPage"
+    ],
+    "expect_source": "discount_rule-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "折扣設定的畫面宿主為 `DiscountsSettingPage`；其相關的 Verified ViewModels 包括：`DiscountsSettingAdjustComponent`、`DiscountsSettingCreateComponent`、`DiscountsMode004Component`、`DiscountsMode009Component`、`DiscountsMode901Component`、`DiscountsMode902Component` [Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設",
+    "sources": [
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-viewmodels",
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_rule-overview.md#折扣活動檢視畫面",
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-services-apis",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_rule-overview.md#折扣方案選擇彈窗畫面",
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-clicksave",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_rule-overview.md#折扣活動編輯表單畫面",
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-步驟-4-點擊-刪除折扣活動"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/discount_rule/output/discount_rule/img/ADMIN-discount_rule-F01/ADMIN-discount_rule-F01-S01-discount_rule_list.jpg",
+      "Store.POS/_assets/modules/ADMIN/discount_rule/output/discount_rule/img/ADMIN-discount_rule-F01/ADMIN-discount_rule-F01-S05-delete_confirmation.jpg"
+    ],
+    "pass": true,
+    "note": "DiscountsMode004Component",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "折扣設定的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "askDeleteResult",
+      "clickAdjust",
+      "clickCancel",
+      "clickContent",
+      "clickCopy",
+      "clickCreate",
+      "clickCycle",
+      "clickDelete",
+      "clickSave",
+      "clickSelect",
+      "clickSortDialog",
+      "clickSwitchMode",
+      "getDiscountSetting",
+      "getDiscountsMenu",
+      "getDiscountsSetting",
+      "newDiscountSetting",
+      "newDiscountsSetting",
+      "onCheckboxChange",
+      "onDelete",
+      "onDiscountTypeChange",
+      "onEdit",
+      "onFilterChange",
+      "onMenuSelectionChange",
+      "onTimeTypeChange",
+      "removeDiscountSetting",
+      "removeDiscountsSetting",
+      "updateDiscountSetting",
+      "updateDiscountsSetting"
+    ],
+    "expect_source": "discount_rule-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的 context，折扣設定涉及多個不同的呼叫鏈，具體方法如下：\n\n*   **關於 `clickSave()` (調整時)：**\n    `DiscountsSettingAdjustComponent.clickSave()` → `DiscountsBoard.updateDiscountsSetting()` → `DiscountSettingService.updateDiscountsSetting()` → `DiscountsApi.updateDiscountSetting()` → `PATCH /v1/discount/setting/{0}` → `Disco",
+    "sources": [
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-clicksave-2",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_rule-overview.md#折扣設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/discount_param-procedure.md#折扣參數設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/discount_rule-procedure.md#折扣設定-工程對應-askdeleteresult",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_rule-overview.md#折扣活動檢視畫面"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/discount_rule/output/discount_rule/img/ADMIN-discount_rule-F01/ADMIN-discount_rule-F01-S01-discount_rule_list.jpg",
+      "Store.POS/_assets/modules/ADMIN/discount_param/output/discount_param/img/ADMIN-discount_param-F01/ADMIN-discount_param-F01-S01-discount_parameters.jpg"
+    ],
+    "pass": true,
+    "note": "askDeleteResult",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "折扣模板會打哪支 API?",
+    "expect_any": [
+      "DELETE /v1/discount/menu/{0}",
+      "GET /v1/discount/menu",
+      "PATCH /v1/discount/menu/{0}",
+      "POST /v1/discount/menu"
+    ],
+    "expect_source": "discount_template-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "折扣模板會呼叫的 API 端點包含：\n*   GET /v1/discount/menu\n*   PATCH /v1/discount/menu/{0}\n*   DELETE /v1/discount/menu/{0}\n*   POST /v1/discount/menu\n\n[Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-engineering-context]",
+    "sources": [
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_template-overview.md#折扣模板編輯表單畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_template-overview.md#折扣方案選擇彈窗畫面",
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-clicksave",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_template-overview.md#折扣模板列表與設定畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_template-overview.md#折扣模板-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-services-apis"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/discount_template/output/discount_template/img/ADMIN-discount_template-F01/ADMIN-discount_template-F01-S01-discount_template_list.jpg"
+    ],
+    "pass": true,
+    "note": "DELETE /v1/discount/menu/{0}(重試 2 次後成功)",
+    "attempts": 3,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "折扣模板是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "DiscountsTemplatesAdjustComponent",
+      "DiscountsTemplatesCreateComponent",
+      "DiscountsTemplatesListComponent",
+      "DiscountsTemplatesPage"
+    ],
+    "expect_source": "discount_template-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "折扣模板的 ViewModel 或元件包括：`DiscountsTemplatesAdjustComponent`、`DiscountsTemplatesCreateComponent`、`DiscountsTemplatesListComponent` 與 `DiscountsTemplatesPage` (折扣模板的畫面宿主) [Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-viewmodels]。",
+    "sources": [
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-viewmodels",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_template-overview.md#折扣模板列表與設定畫面",
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_template-overview.md#折扣模板編輯表單畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_template-overview.md#折扣方案選擇彈窗畫面",
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-commands"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/discount_template/output/discount_template/img/ADMIN-discount_template-F01/ADMIN-discount_template-F01-S01-discount_template_list.jpg"
+    ],
+    "pass": true,
+    "note": "DiscountsTemplatesAdjustComponent",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "折扣模板的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "askDeleteResult",
+      "clickAdjust",
+      "clickCancel",
+      "clickCopy",
+      "clickCreate",
+      "clickDelete",
+      "clickSave",
+      "clickSelect",
+      "clickSortDialog",
+      "clickSwitchMode",
+      "getDiscountsMenu",
+      "newDiscountsMenu",
+      "onFilterChange",
+      "removeDiscountsMenu",
+      "updateDiscountsMenu"
+    ],
+    "expect_source": "discount_template-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件內容，折扣模板根據不同的操作行為，其 `clickSave` 與 `askDeleteResult` 的呼叫鏈經過以下方法：\n\n*   **修改/調整折扣模板時的 `clickSave` 呼叫鏈：**\n    `DiscountsTemplatesAdjustComponent.clickSave()` → `DiscountsBoard.updateDiscountsMenu()` → `DiscountMenuService.updateDiscountsMenu()` → `DiscountsApi.updateDiscountsMenu()` → `PATCH /v1/d",
+    "sources": [
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-viewmodels",
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-discount_template-overview.md#折扣模板編輯表單畫面",
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-clicksave-2",
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-完整步驟總覽",
+      "Store.POS/procedures/ADMIN/discount_template-procedure.md#折扣模板-工程對應-askdeleteresult"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/discount_template/output/discount_template/img/ADMIN-discount_template-F01/ADMIN-discount_template-F01-S01-discount_template_list.jpg"
+    ],
+    "pass": true,
+    "note": "askDeleteResult",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "菜單設定會打哪支 API?",
+    "expect_any": [
+      "DELETE /v1/menu/{0}",
+      "DELETE /v1/price/catalog/{0}",
+      "GET /v1/menu/{0}/service",
+      "GET /v1/product/picture/{0}",
+      "PATCH /v1/menu/{0}/service",
+      "PATCH /v1/price/catalog/{0}",
+      "PATCH /v1/product/picture/{0}"
+    ],
+    "expect_source": "menu-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的內容，菜單設定會根據不同操作呼叫不同的 API：\n\n*   **刪除操作**：`DELETE /v1/menu/{0}` (來源：[Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-askdeleteresult])\n*   **儲存操作**：`PATCH /v1/menu/{0}/service` (來源：[Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-clicksave-2])\n*   **週期變更操作**：`GET /v1/menu/{0}/service",
+    "sources": [
+      "Store.POS/ui_inventory/_modules/ADMIN-menu-overview.md#菜單列表與設定畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-menu-overview.md#菜單資訊彈窗畫面",
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-askdeleteresult",
+      "Store.POS/ui_inventory/_modules/ADMIN-menu-overview.md#菜單設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-clicksave-2",
+      "Store.POS/ui_inventory/_modules/ADMIN-menu-overview.md#平台菜單時間軸畫面",
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-onperiodchange",
+      "Store.POS/ui_inventory/_modules/ADMIN-menu-overview.md#價目表列表與設定畫面"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/menu/output/menu/img/ADMIN-menu-F01/ADMIN-menu-F01-S01-menu_list.jpg"
+    ],
+    "pass": true,
+    "note": "DELETE /v1/menu/{0}",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "菜單設定是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "AllCategoryList",
+      "MenuPage",
+      "MenuTemplateList",
+      "PictureManagerAdjust",
+      "PictureManagerSubTab",
+      "PlatFormViewAdjust",
+      "PlatformViewHome",
+      "PlatformViewSettingSubTab",
+      "PriceListAdjust",
+      "PriceListShow",
+      "PriceListSubTab",
+      "PriceTimelineSubTab",
+      "ProductDetailBodyComboNormal",
+      "ProductDetailBodyComboSubset",
+      "ProductDetailBodySubset",
+      "TemplateAdjust",
+      "ViewAdjustSubset"
+    ],
+    "expect_source": "menu-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的內容，菜單設定的 ViewModel 與元件包含：\n\n- **Verified ViewModels**: `MenuPage`, `PictureManagerAdjust`, `PictureManagerSubTab`, `ViewAdjustSubset`, `PlatFormViewAdjust`, `PlatformViewHome`, `AllCategoryList`, `MenuTemplateList`, `ProductDetailBodyComboNormal`, `ProductDetailBodyComboSubset`, `ProductDetailBo",
+    "sources": [
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-viewmodels",
+      "Store.POS/ui_inventory/_modules/ADMIN-menu-overview.md#菜單資訊彈窗畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-menu-overview.md#平台菜單時間軸畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-menu-overview.md#菜單列表與設定畫面",
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-onperiodchange",
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-步驟-3-點擊-刪除菜單",
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-步驟-4-點擊-確認菜單資訊操作"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/menu/output/menu/img/ADMIN-menu-F01/ADMIN-menu-F01-S01-menu_list.jpg",
+      "Store.POS/_assets/modules/ADMIN/menu/output/menu/img/ADMIN-menu-F01/ADMIN-menu-F01-S04-menu_delete_confirmation.jpg",
+      "Store.POS/_assets/modules/ADMIN/menu/output/menu/img/ADMIN-menu-F01/ADMIN-menu-F01-S05-menu_info_confirmation.jpg"
+    ],
+    "pass": true,
+    "note": "AllCategoryList",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "菜單設定的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "askDeleteResult",
+      "clickAbort",
+      "clickAdjust",
+      "clickCancel",
+      "clickCreate",
+      "clickDelete",
+      "clickSave",
+      "clickSelect",
+      "clickSortDialog",
+      "clickSwitchMode",
+      "clickaddPrice",
+      "clickmodifyPriceList",
+      "clickmodifymenuinfo",
+      "clickselectflover",
+      "clickselectproduct",
+      "clicktemplateadjust",
+      "delPriceCatalog",
+      "delete",
+      "deleteMenu",
+      "getData",
+      "getMenuDetail",
+      "getProductPicture",
+      "getRemoteProductPicture",
+      "getallcustomerperiod",
+      "initData",
+      "load",
+      "lookupProductPicture",
+      "onBodyToggle",
+      "onCheckallposChange",
+      "onCheckboxChange",
+      "onCollapseBarSelect",
+      "onFilterChange",
+      "onHeadToggle",
+      "onHeadTogglesubset",
+      "onPeriodChange",
+      "onPriceChange",
+      "onPriceTypeChange",
+      "onSelect",
+      "remove",
+      "setData",
+      "switchTab",
+      "updatRemotePriceChange",
+      "update",
+      "updatePlatFormProduct",
+      "updateProductPicture",
+      "updateperiod",
+      "updatepricechange"
+    ],
+    "expect_source": "menu-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件內容，菜單設定涉及多個功能，其呼叫鏈經過的方法如下：\n\n*   **onPeriodChange**: `PlatFormViewAdjust.onPeriodChange()` → `PlatFormViewAdjust.setData()` → `PlatFormViewAdjust.load()` → `MenuBoard.getMenuDetail()` → `MenuService.getallcustomerperiod()` → `MenuApi.getallcustomerperiod()` → GET /v1/menu/{0}/service [Store.PO",
+    "sources": [
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-onperiodchange",
+      "Store.POS/ui_inventory/_modules/ADMIN-menu-overview.md#平台菜單時間軸畫面",
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-askdeleteresult",
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-clicksave-2",
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-viewmodels",
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-工程對應-clicksave-3"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/menu/output/menu/img/ADMIN-menu-F01/ADMIN-menu-F01-S01-menu_list.jpg"
+    ],
+    "pass": true,
+    "note": "askDeleteResult",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "點餐基本參數設定會打哪支 API?",
+    "expect_any": [
+      "GET /v1/setting/ordering",
+      "PATCH /v1/setting/ordering"
+    ],
+    "expect_source": "ordering_basic-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "點餐基本參數設定會呼叫以下 API 端點：\n- GET /v1/setting/ordering\n- PATCH /v1/setting/ordering\n\n[Store.POS/procedures/ADMIN/ordering_basic-procedure.md#點餐基本參數設定-工程對應-engineering-context]",
+    "sources": [
+      "Store.POS/procedures/ADMIN/ordering_basic-procedure.md#點餐基本參數設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/ordering_basic-procedure.md#點餐基本參數設定-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/ordering_basic-procedure.md#點餐基本參數設定-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-ordering_basic-overview.md#點餐基本參數設定-module-按鈕與畫面索引",
+      "Store.POS/ui_inventory/_modules/ADMIN-ordering_basic-overview.md#點餐基本參數編輯畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-ordering_basic-overview.md#點餐基本參數檢視畫面",
+      "Store.POS/procedures/ADMIN/ordering_basic-procedure.md#點餐基本參數設定-工程對應-clicksave",
+      "Store.POS/ui_inventory/dc6b3c39a7-ui_inventory.md#點餐基本參數檢視的輸入欄位"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/ordering_basic/output/ordering_basic/img/ADMIN-ordering_basic-F01/ADMIN-ordering_basic-F01-S01-ordering_basic_settings.jpg"
+    ],
+    "pass": true,
+    "note": "GET /v1/setting/ordering",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "點餐基本參數設定是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "OrderSettingTab"
+    ],
+    "expect_source": "ordering_basic-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "點餐基本參數設定的畫面宿主為 `OrderSettingTab` ViewModel [Store.POS/procedures/ADMIN/ordering_basic-procedure.md#點餐基本參數設定-工程對應-viewmodels]。",
+    "sources": [
+      "Store.POS/procedures/ADMIN/ordering_basic-procedure.md#點餐基本參數設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/ordering_basic-procedure.md#點餐基本參數設定-工程對應-viewmodels",
+      "Store.POS/ui_inventory/_modules/ADMIN-ordering_basic-overview.md#點餐基本參數檢視畫面",
+      "Store.POS/ui_inventory/dc6b3c39a7-ui_inventory.md#點餐基本參數檢視的按鈕",
+      "Store.POS/ui_inventory/dc6b3c39a7-ui_inventory.md#點餐基本參數檢視的輸入欄位",
+      "Store.POS/ui_inventory/dc6b3c39a7-ui_inventory.md#點餐基本參數檢視-ui-控制項清單",
+      "Store.POS/ui_inventory/_modules/ADMIN-ordering_basic-overview.md#點餐基本參數編輯畫面",
+      "Store.POS/ui_inventory/b56dbcd0bd-ui_inventory.md#點餐基本參數編輯-ui-控制項清單"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/ordering_basic/output/ordering_basic/img/ADMIN-ordering_basic-F01/ADMIN-ordering_basic-F01-S01-ordering_basic_settings.jpg",
+      "Store.POS/_assets/modules/ADMIN/ordering_basic/screenshots/00_start/001.png",
+      "Store.POS/_assets/modules/ADMIN/ordering_basic/screenshots/01_click/001.png"
+    ],
+    "pass": true,
+    "note": "OrderSettingTab",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "點餐基本參數設定的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "clickAbort",
+      "clickEdit",
+      "clickSave",
+      "getSetting",
+      "requestData",
+      "updateSetting"
+    ],
+    "expect_source": "ordering_basic-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的內容，點餐基本參數設定的 `clickSave` 實際呼叫鏈經過以下方法：\n\n`OrderSettingTab.clickSave()` → `OrderBoard.updateSetting()` → `OrderService.updateSetting()` → `OrderApi.updateSetting()` → `PATCH /v1/setting/ordering` → `OrderSettingTab.requestData()` → `OrderBoard.getSetting()` → `OrderService.getSetting()` → `OrderAp",
+    "sources": [
+      "Store.POS/procedures/ADMIN/ordering_basic-procedure.md#點餐基本參數設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/ordering_basic-procedure.md#點餐基本參數設定-工程對應-services-apis",
+      "Store.POS/ui_inventory/_modules/ADMIN-ordering_basic-overview.md#點餐基本參數設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/ordering_basic-procedure.md#點餐基本參數設定-工程對應-clicksave",
+      "Store.POS/ui_inventory/_modules/ADMIN-ordering_basic-overview.md#點餐基本參數編輯畫面",
+      "Store.POS/procedures/ADMIN/ordering_basic-procedure.md#點餐基本參數設定-工程對應-viewmodels",
+      "Store.POS/ui_inventory/_modules/ADMIN-ordering_basic-overview.md#點餐基本參數檢視畫面",
+      "Store.POS/procedures/ADMIN/ordering_basic-procedure.md#點餐基本參數設定-操作程序"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/ordering_basic/output/ordering_basic/img/ADMIN-ordering_basic-F01/ADMIN-ordering_basic-F01-S01-ordering_basic_settings.jpg"
+    ],
+    "pass": true,
+    "note": "clickSave",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "Kiosk機台設定會打哪支 API?",
+    "expect_any": [
+      "DELETE /v1/setting/ordering/kiosk/{0}",
+      "GET /v1/setting/ordering/kiosk",
+      "PATCH /v1/setting/ordering/kiosk/{0}",
+      "POST /v1/media/image/product",
+      "POST /v1/setting/ordering/kiosk"
+    ],
+    "expect_source": "ordering_kiosk-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "Kiosk機台設定會呼叫的 API 端點包含：\n- `POST /v1/media/image/product`\n- `GET /v1/setting/ordering/kiosk`\n- `PATCH /v1/setting/ordering/kiosk/{0}`\n- `DELETE /v1/setting/ordering/kiosk/{0}`\n- `POST /v1/setting/ordering/kiosk`\n\n(資料來源：Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-工程對應-engineering-",
+    "sources": [
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-工程對應-clicksave-2",
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-完整步驟總覽",
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-ordering_kiosk-overview.md#kiosk機台設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-工程對應-askdeleteresult",
+      "Store.POS/ui_inventory/_modules/ADMIN-ordering_kiosk-overview.md#kiosk-機台設定檢視畫面",
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-工程對應-services-apis"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/ordering_kiosk/output/ordering_kiosk/img/ADMIN-ordering_kiosk-F01/ADMIN-ordering_kiosk-F01-S01-kiosk_settings.jpg"
+    ],
+    "pass": true,
+    "note": "DELETE /v1/setting/ordering/kiosk/{0}(重試 1 次後成功)",
+    "attempts": 2,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "Kiosk機台設定是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "KioskSettingsAdjust",
+      "KioskSettingsCreate",
+      "KioskSettingsList",
+      "KioskSettingsSubTab"
+    ],
+    "expect_source": "ordering_kiosk-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件內容，Kiosk機台設定的 Verified ViewModels 包括：`KioskSettingsAdjust`、`KioskSettingsCreate`、`KioskSettingsList` 與 `KioskSettingsSubTab`，這些 ViewModel 是 Kiosk機台設定的畫面宿主 [Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-工程對應-viewmodels]。",
+    "sources": [
+      "Store.POS/ui_inventory/aa48c40004-ui_inventory.md#kiosk-機台設定檢視的按鈕",
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-工程對應-viewmodels",
+      "Store.POS/ui_inventory/aa48c40004-ui_inventory.md#kiosk-機台設定檢視-ui-控制項清單",
+      "Store.POS/ui_inventory/_modules/ADMIN-ordering_kiosk-overview.md#kiosk機台設定-module-按鈕與畫面索引",
+      "Store.POS/ui_inventory/_modules/ADMIN-ordering_kiosk-overview.md#kiosk-機台設定檢視畫面",
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-完整步驟總覽",
+      "Store.POS/ui_inventory/a13994a407-ui_inventory.md#kiosk-機台設定編輯-ui-控制項清單"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/ordering_kiosk/output/ordering_kiosk/img/ADMIN-ordering_kiosk-F01/ADMIN-ordering_kiosk-F01-S01-kiosk_settings.jpg",
+      "Store.POS/_assets/modules/ADMIN/ordering_kiosk/screenshots/00_start/001.png",
+      "Store.POS/_assets/modules/ADMIN/ordering_kiosk/screenshots/01_click/001.png"
+    ],
+    "pass": true,
+    "note": "KioskSettingsAdjust",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "Kiosk機台設定的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "askDeleteResult",
+      "clickAdjust",
+      "clickBinding",
+      "clickCancel",
+      "clickCreate",
+      "clickDelete",
+      "clickSave",
+      "clickSelect",
+      "clickSwitchMode",
+      "croppingImageResult",
+      "getRemoteKioskSetting",
+      "newKioskSetting",
+      "onClickCroppingImage",
+      "onClickRemoveImage",
+      "onFilterChange",
+      "onSystemModeChange",
+      "removeKioskSetting",
+      "updateKioskSetting",
+      "uploadPlatFormProductImage"
+    ],
+    "expect_source": "ordering_kiosk-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件內容，Kiosk機台設定根據不同的操作行為，其呼叫鏈經過的方法如下：\n\n*   **執行 `clickSave()` (調整設定時)**：\n    `KioskSettingsAdjust.clickSave()` → `KioskSettingBoard.updateKioskSetting()` → `KioskSettingService.updateKioskSetting()` → `KioskSettingApi.updateKioskSetting()` → `PATCH /v1/setting/ordering/kiosk/{0}` → `KioskSetting",
+    "sources": [
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-工程對應-clicksave-2",
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-ordering_kiosk-overview.md#kiosk-機台設定檢視畫面",
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-工程對應-askdeleteresult",
+      "Store.POS/ui_inventory/_modules/ADMIN-ordering_kiosk-overview.md#kiosk機台設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/ordering_kiosk-procedure.md#kiosk機台設定-完整步驟總覽"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/ordering_kiosk/output/ordering_kiosk/img/ADMIN-ordering_kiosk-F01/ADMIN-ordering_kiosk-F01-S01-kiosk_settings.jpg"
+    ],
+    "pass": true,
+    "note": "askDeleteResult",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "付款方式設定會打哪支 API?",
+    "expect_any": [
+      "DELETE /v1/Payment/{0}",
+      "PATCH /v1/Payment/{0}",
+      "POST /v1/Payment"
+    ],
+    "expect_source": "payment_method-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "付款方式設定會呼叫以下 API 端點：\n- PATCH /v1/Payment/{0}\n- DELETE /v1/Payment/{0}\n- POST /v1/Payment\n\n[Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-工程對應-engineering-context]",
+    "sources": [
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_method-overview.md#付款方式設定-module-按鈕與畫面索引",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_method-overview.md#付款方式列表與設定畫面",
+      "Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_method-overview.md#付款方式編輯表單畫面",
+      "Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-工程對應-clicksave-2",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_method-overview.md#付款方式變更確認畫面",
+      "Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-完整步驟總覽"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/payment_method/output/payment_method/img/ADMIN-payment_method-F01/ADMIN-payment_method-F01-S01-payment_method_list.jpg"
+    ],
+    "pass": true,
+    "note": "DELETE /v1/Payment/{0}",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "付款方式設定是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "CheckoutPaymentTab",
+      "PaymentAdjustPage",
+      "PaymentCreatePage"
+    ],
+    "expect_source": "payment_method-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件，付款方式設定的 ViewModel 或畫面宿主包含：\n`CheckoutPaymentTab`、`PaymentAdjustPage`、`PaymentCreatePage` [Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-工程對應-viewmodels]。",
+    "sources": [
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_method-overview.md#付款方式列表與設定畫面",
+      "Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-工程對應-viewmodels",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_method-overview.md#付款方式變更確認畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_method-overview.md#付款方式編輯表單畫面",
+      "Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-工程對應-commands",
+      "Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-工程對應-clicksave-2"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/payment_method/output/payment_method/img/ADMIN-payment_method-F01/ADMIN-payment_method-F01-S01-payment_method_list.jpg"
+    ],
+    "pass": true,
+    "note": "CheckoutPaymentTab",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "付款方式設定的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "addPayment",
+      "askDeleteResult",
+      "clickAdjust",
+      "clickBinding",
+      "clickCancel",
+      "clickCreate",
+      "clickDelete",
+      "clickEnable",
+      "clickSave",
+      "clickSwitchMode",
+      "deletePayment",
+      "patchPayment",
+      "postPayment",
+      "updatePayment"
+    ],
+    "expect_source": "payment_method-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的內容，付款方式設定的呼叫鏈包含以下兩種經過不同方法的路徑：\n\n1.  **更新付款方式（PATCH）的呼叫鏈**：\n    `PaymentAdjustPage.clickSave()` → `PaymentBoard.updatePayment()` → `PaymentService.patchPayment()` → `PaymentApi.patchPayment()` → PATCH /v1/Payment/{0} [Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-工程對應-clicksave]\n\n",
+    "sources": [
+      "Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_method-overview.md#付款方式列表與設定畫面",
+      "Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-工程對應-clicksave",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_method-overview.md#付款方式設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-工程對應-clicksave-2",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_method-overview.md#付款方式編輯表單畫面",
+      "Store.POS/procedures/ADMIN/payment_method-procedure.md#付款方式設定-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_method-overview.md#付款方式變更確認畫面"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/payment_method/output/payment_method/img/ADMIN-payment_method-F01/ADMIN-payment_method-F01-S01-payment_method_list.jpg"
+    ],
+    "pass": true,
+    "note": "addPayment",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "機台付款設定會打哪支 API?",
+    "expect_any": [
+      "GET /v1/discount/stores/{0}/setting",
+      "POST /v1/discount/stores/{0}/setting",
+      "POST /v1/media/image/product"
+    ],
+    "expect_source": "payment_terminal-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "機台付款設定會呼叫的 API 端點如下：\n- POST /v1/media/image/product\n- GET /v1/discount/stores/{0}/setting\n- POST /v1/discount/stores/{0}/setting\n\n[Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-工程對應-engineering-context]",
+    "sources": [
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_terminal-overview.md#機台付款設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-完整步驟總覽",
+      "Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_terminal-overview.md#機台付款設定檢視畫面",
+      "Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-工程對應-services-apis",
+      "Store.POS/ui_inventory/8f5aea4641-ui_inventory.md#機台付款設定編輯的輸入欄位",
+      "Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-工程對應-viewmodels"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/payment_terminal/output/payment_terminal/img/ADMIN-payment_terminal-F01/ADMIN-payment_terminal-F01-S01-terminal_settings.jpg"
+    ],
+    "pass": true,
+    "note": "GET /v1/discount/stores/{0}/setting",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "機台付款設定是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "MachinePaymentAdjustPage",
+      "MachinePaymentCreatePage",
+      "MachinePaymentListPage",
+      "MachinePaymentSettingSubTab"
+    ],
+    "expect_source": "payment_terminal-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件內容，機台付款設定的畫面宿主為以下 Verified ViewModels：\n\n`MachinePaymentAdjustPage`、`MachinePaymentCreatePage`、`MachinePaymentListPage`、`MachinePaymentSettingSubTab` [Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-工程對應-viewmodels]",
+    "sources": [
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_terminal-overview.md#機台付款設定檢視畫面",
+      "Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_terminal-overview.md#機台付款設定編輯畫面",
+      "Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-工程對應-viewmodels",
+      "Store.POS/ui_inventory/8f5aea4641-ui_inventory.md#機台付款設定編輯的輸入欄位",
+      "Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_terminal-overview.md#機台付款設定-module-按鈕與畫面索引",
+      "Store.POS/ui_inventory/8f5aea4641-ui_inventory.md#機台付款設定編輯的按鈕"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/payment_terminal/output/payment_terminal/img/ADMIN-payment_terminal-F01/ADMIN-payment_terminal-F01-S01-terminal_settings.jpg"
+    ],
+    "pass": true,
+    "note": "MachinePaymentAdjustPage",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "機台付款設定的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "askDeleteResult",
+      "clickAdjust",
+      "clickBinding",
+      "clickCancel",
+      "clickCreate",
+      "clickDelete",
+      "clickSave",
+      "clickSelect",
+      "clickSwitchMode",
+      "croppingImageResult",
+      "getDiscountContent",
+      "newDiscountContent",
+      "onClickCroppingImage",
+      "onClickRemoveImage",
+      "onFilterChange",
+      "onSystemModeChange",
+      "uploadPlatFormProductImage"
+    ],
+    "expect_source": "payment_terminal-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件內容，「機台付款設定」的呼叫鏈包含以下方法：\n\n*   **clickSave 相關呼叫鏈**：`MachinePaymentCreatePage.clickSave()` → `discountApi.newDiscountContent()` → `POST /v1/discount/stores/{0}/setting` → `discountApi.getDiscountContent()` → `GET /v1/discount/stores/{0}/setting` [Store.POS/procedures/ADMIN/payment_terminal-proced",
+    "sources": [
+      "Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_terminal-overview.md#機台付款設定檢視畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_terminal-overview.md#機台付款設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-工程對應-viewmodels",
+      "Store.POS/procedures/ADMIN/payment_terminal-procedure.md#機台付款設定-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-payment_terminal-overview.md#機台付款設定編輯畫面"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/payment_terminal/output/payment_terminal/img/ADMIN-payment_terminal-F01/ADMIN-payment_terminal-F01-S01-terminal_settings.jpg"
+    ],
+    "pass": true,
+    "note": "clickSave",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "商品設定會打哪支 API?",
+    "expect_any": [
+      "DELETE /v1/category/addition/{0}",
+      "DELETE /v1/category/product/{0}",
+      "DELETE /v1/product/subset/{0}",
+      "DELETE /v1/product/{0}",
+      "DELETE /v1/subset/catalog/{0}",
+      "DELETE /v1/tableware/{0}",
+      "GET /v1/product",
+      "GET /v1/tableware",
+      "PATCH /v1/category/addition/{0}",
+      "PATCH /v1/category/product/{0}",
+      "PATCH /v1/product/subset/{0}",
+      "PATCH /v1/product/{0}",
+      "PATCH /v1/subset/catalog/{0}",
+      "PATCH /v1/tableware/{0}",
+      "POST /v1/category/addition/combo",
+      "POST /v1/category/addition/flavor",
+      "POST /v1/category/product",
+      "POST /v1/product/addition",
+      "POST /v1/product/combo",
+      "POST /v1/product/normal",
+      "POST /v1/product/subset",
+      "POST /v1/product/subset/template",
+      "POST /v1/subset/catalog",
+      "POST /v1/tableware"
+    ],
+    "expect_source": "product-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的上下文，商品設定根據不同的操作類型會呼叫不同的 API：\n\n*   **一般商品更新**：`PATCH /v1/product/{0}` (來源：[Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave](Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave) 與 [Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave-9](Store.POS",
+    "sources": [
+      "Store.POS/ui_inventory/_modules/ADMIN-product-overview.md#商品類別列表與設定畫面",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave-15",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave-16",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave-9",
+      "Store.POS/ui_inventory/_modules/ADMIN-product-overview.md#一般商品變更確認畫面",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave-10",
+      "Store.POS/ui_inventory/_modules/ADMIN-product-overview.md#套餐商品變更確認畫面"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/product/output/product/img/ADMIN-product-F01/ADMIN-product-F01-S01-tableware_list.jpg"
+    ],
+    "pass": true,
+    "note": "PATCH /v1/product/{0}",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "商品設定是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "CategoryProductListComponent",
+      "ComboAdditionList",
+      "ComboAdjust",
+      "ComboCategoryAdjust",
+      "ComboCategoryComboList",
+      "ComboCategoryCreate",
+      "ComboCategoryList",
+      "ComboCategorySubTab",
+      "ComboCreate",
+      "ComboSettingSubTab",
+      "FlavorAdjust",
+      "FlavorCategoryAdjust",
+      "FlavorCategoryCreate",
+      "FlavorCategoryFlavorList",
+      "FlavorCategoryList",
+      "FlavorCategorySubTab",
+      "FlavorCreate",
+      "FlavorSettingSubTab",
+      "GeneralProductAdjust",
+      "GeneralProductCreate",
+      "GeneralProductSubTab",
+      "ProducTtableware",
+      "ProductCategoryAdjust",
+      "ProductCategoryCreate",
+      "ProductCategorySubTab",
+      "ProductFlavorList",
+      "ProductTablewareAdjust",
+      "ProductTablewareCreate",
+      "SubTemplateAdjust",
+      "SubTemplateCreate",
+      "SubTemplateListComponent",
+      "SubTemplateSettingSubTab",
+      "SubsetCategoryList",
+      "SubsetChooseList",
+      "SubsetComboAdjust",
+      "SubsetComboCreate",
+      "SubsetComboSubTab",
+      "SubsetNewItem"
+    ],
+    "expect_source": "product-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的上下文，商品設定的 ViewModel 或元件包括：\n\n**ViewModels (畫面宿主):**\n`ComboSettingSubTab`, `ComboAdditionList`, `ComboAdjust`, `ComboCreate`, `ComboCategorySubTab`, `ComboCategoryAdjust`, `ComboCategoryComboList`, `ComboCategoryCreate`, `FlavorAdjust`, `FlavorCreate`, `FlavorSettingSubTab`, `FlavorCategoryAdjust",
+    "sources": [
+      "Store.POS/ui_inventory/_modules/ADMIN-product-overview.md#商品類別列表與設定畫面",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-commands",
+      "Store.POS/procedures/ADMIN/menu-procedure.md#菜單設定-步驟-3-點擊-刪除菜單",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-viewmodels",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-步驟-11-點擊-新增一般商品",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-步驟-13-點擊-刪除一般商品",
+      "Store.POS/ui_inventory/_modules/ADMIN-product-overview.md#調味列表與設定畫面"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/product/output/product/img/ADMIN-product-F01/ADMIN-product-F01-S01-tableware_list.jpg",
+      "Store.POS/_assets/modules/ADMIN/menu/output/menu/img/ADMIN-menu-F01/ADMIN-menu-F01-S04-menu_delete_confirmation.jpg",
+      "Store.POS/_assets/modules/ADMIN/product/output/product/img/ADMIN-product-F01/ADMIN-product-F01-S12-product_create_form.jpg",
+      "Store.POS/_assets/modules/ADMIN/product/output/product/img/ADMIN-product-F01/ADMIN-product-F01-S14-product_delete_confirmation.jpg"
+    ],
+    "pass": true,
+    "note": "CategoryProductListComponent(重試 1 次後成功)",
+    "attempts": 2,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "商品設定的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "addAddition",
+      "addCategoryAddition",
+      "addCategoryCombo",
+      "addCategoryProduct",
+      "addCombo",
+      "addNormal",
+      "addProductAddition",
+      "addProductCombo",
+      "addProductNormal",
+      "addSubSet",
+      "addSubSetTemplate",
+      "askDeleteResult",
+      "clickAddProduct",
+      "clickAdjust",
+      "clickBinding",
+      "clickBranch",
+      "clickCancel",
+      "clickCopy",
+      "clickCreate",
+      "clickDelete",
+      "clickEdit",
+      "clickLink",
+      "clickSave",
+      "clickSaveAndNext",
+      "clickSelect",
+      "clickSort",
+      "clickSortDialog",
+      "clickSwitchMode",
+      "deletTableWare",
+      "delete",
+      "deleteAdditionCategory",
+      "deleteProduct",
+      "deleteProductCategory",
+      "deleteSubCatalog",
+      "deleteSubSet",
+      "getRemoteProduct",
+      "getRemoteTableware",
+      "getStoreProduct",
+      "lookup",
+      "lookupProduct",
+      "newAdditionCategory",
+      "newComboCategory",
+      "newProductCategory",
+      "newTableWare",
+      "onFilterChange",
+      "onOtherSettingChangeCharge",
+      "onOtherSettingChangeDiscount",
+      "patch",
+      "patchSubCatalog",
+      "post",
+      "postSubCatalog",
+      "remove",
+      "removeCategoryAddition",
+      "removeCategoryProduct",
+      "removeProduct",
+      "removeSubSet",
+      "updataProductCategory",
+      "updataTableWare",
+      "update",
+      "updateAddition",
+      "updateAdditionCategory",
+      "updateCategoryAddition",
+      "updateCategoryProduct",
+      "updateProduct",
+      "updateSubSet"
+    ],
+    "expect_source": "product-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件內容，商品設定的 `clickSave` 會根據不同的操作情境呼叫不同的方法與 API 鏈路，具體如下：\n\n*   **新增商品分類 (ProductCategoryCreate)**:\n    `ProductCategoryCreate.clickSave()` → `CategoryBoard.newProductCategory()` → `ProductCategoryService.add()` → `ProductApi.addCategoryProduct()` → `POST /v1/category/product` → `ProductBoard.getRe",
+    "sources": [
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave-12",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave-6",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave-10",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave-16",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave-15",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave-5",
+      "Store.POS/procedures/ADMIN/product-procedure.md#商品設定-工程對應-clicksave-4"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/product/output/product/img/ADMIN-product-F01/ADMIN-product-F01-S01-tableware_list.jpg"
+    ],
+    "pass": true,
+    "note": "addAddition",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "站點設定會打哪支 API?",
+    "expect_any": [
+      "DELETE /v1/station/category/{0}",
+      "GET /v1/station/categories",
+      "PATCH /v1/station/category/{0}",
+      "POST /v1/station/category"
+    ],
+    "expect_source": "station-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的內容，站點設定會呼叫的 API 端點如下：\n\n- GET /v1/station/categories\n- PATCH /v1/station/category/{0}\n- DELETE /v1/station/category/{0}\n- POST /v1/station/category\n\n來源：[Store.POS/procedures/ADMIN/station-procedure.md#站點設定-工程對應-engineering-context]",
+    "sources": [
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-station-overview.md#站點群組列表與設定畫面",
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-完整步驟總覽",
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-工程對應-services-apis",
+      "Store.POS/ui_inventory/_modules/ADMIN-station-overview.md#站點設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-工程對應-clicksave-2",
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-操作程序"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/station/output/station/img/ADMIN-station-F01/ADMIN-station-F01-S01-station_group_list.jpg"
+    ],
+    "pass": true,
+    "note": "DELETE /v1/station/category/{0}",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "站點設定是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "StationGroupCreate",
+      "StationGroupList",
+      "StationListComponent",
+      "StationPage",
+      "StationStoreListComponent",
+      "stationGroupAdjust"
+    ],
+    "expect_source": "station-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件內容，站點設定的 ViewModel 或元件資訊如下：\n\n*   **Verified ViewModels**: `StationPage`、`stationGroupAdjust`、`StationGroupCreate`、`StationListComponent`、`StationStoreListComponent`、`StationGroupList`（這些是站點設定的畫面宿主） [Store.POS/procedures/ADMIN/station-procedure.md#站點設定-工程對應-viewmodels]\n*   **Symbol Index (元件/符",
+    "sources": [
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-工程對應-viewmodels",
+      "Store.POS/ui_inventory/_modules/ADMIN-station-overview.md#站點群組列表與設定畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-station-overview.md#站點群組編輯表單畫面",
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-操作程序",
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-完整步驟總覽",
+      "Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-工程對應-viewmodels",
+      "Store.POS/ui_inventory/_modules/ADMIN-station-overview.md#站點設定-module-按鈕與畫面索引"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/station/output/station/img/ADMIN-station-F01/ADMIN-station-F01-S01-station_group_list.jpg",
+      "Store.POS/_assets/modules/ADMIN/store_shared/output/store_shared/img/ADMIN-store_shared-F01/ADMIN-store_shared-F01-S01-shared_parameters.jpg"
+    ],
+    "pass": true,
+    "note": "StationGroupCreate",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "站點設定的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "addStationCategory",
+      "askDeleteResult",
+      "clickAdd",
+      "clickAdjust",
+      "clickBinding",
+      "clickCancel",
+      "clickCreate",
+      "clickDelete",
+      "clickEdit",
+      "clickSave",
+      "clickSelect",
+      "clickSwitchMode",
+      "getRemoteStationCategories",
+      "lookup",
+      "onFilterChange",
+      "onSelect",
+      "remove",
+      "removeStationCategory",
+      "update",
+      "updateStationCategory"
+    ],
+    "expect_source": "station-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件內容，站點設定包含以下兩條主要的 `clickSave` 呼叫鏈：\n\n1.  **針對 `stationGroupAdjust.clickSave()` 的呼叫鏈**：\n    `stationGroupAdjust.clickSave()` $\\rightarrow$ `StationBoard.updateStationCategory()` $\\rightarrow$ `StationService.update()` $\\rightarrow$ `StationApi.update()` $\\rightarrow$ `PATCH /v1/station/category/",
+    "sources": [
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-完整步驟總覽",
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-工程對應-clicksave",
+      "Store.POS/ui_inventory/_modules/ADMIN-station-overview.md#站點設定-module-按鈕與畫面索引",
+      "Store.POS/ui_inventory/_modules/ADMIN-station-overview.md#站點群組編輯表單畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-station-overview.md#站點群組列表與設定畫面",
+      "Store.POS/procedures/ADMIN/station-procedure.md#站點設定-工程對應-clicksave-2"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/station/output/station/img/ADMIN-station-F01/ADMIN-station-F01-S01-station_group_list.jpg"
+    ],
+    "pass": true,
+    "note": "addStationCategory",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "店家基本參數設定會打哪支 API?",
+    "expect_any": [
+      "GET /v1/region",
+      "GET /v1/store",
+      "PATCH /v1/store/{0}/detail"
+    ],
+    "expect_source": "store_basic-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "店家基本參數設定會呼叫的 API 端點包括：\n- `GET /v1/region`\n- `PATCH /v1/store/{0}/detail`\n- `GET /v1/store`\n\n[Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-工程對應-engineering-context]",
+    "sources": [
+      "Store.POS/ui_inventory/_modules/ADMIN-store_basic-overview.md#店家基本參數編輯畫面",
+      "Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_basic-overview.md#店家基本參數檢視畫面",
+      "Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_basic-overview.md#店家基本參數設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-操作程序",
+      "Store.POS/ui_inventory/054fbfa0f0-ui_inventory.md#店家基本參數編輯的按鈕"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/store_basic/output/store_basic/img/ADMIN-store_basic-F01/ADMIN-store_basic-F01-S01-store_detail.jpg"
+    ],
+    "pass": true,
+    "note": "GET /v1/region",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "店家基本參數設定是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "StoreBranchSettingPage",
+      "StoresSettingAdjustComponent"
+    ],
+    "expect_source": "store_basic-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "店家基本參數設定的畫面宿主為 `StoresSettingAdjustComponent` 與 `StoreBranchSettingPage` [Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-工程對應-viewmodels]。",
+    "sources": [
+      "Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-工程對應-viewmodels",
+      "Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_basic-overview.md#店家基本參數檢視畫面",
+      "Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_basic-overview.md#店家基本參數編輯畫面",
+      "Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-操作程序",
+      "Store.POS/ui_inventory/b70a9d7962-ui_inventory.md#店家基本參數檢視-ui-控制項清單",
+      "Store.POS/ui_inventory/054fbfa0f0-ui_inventory.md#店家基本參數編輯的按鈕"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/store_basic/output/store_basic/img/ADMIN-store_basic-F01/ADMIN-store_basic-F01-S01-store_detail.jpg",
+      "Store.POS/_assets/modules/ADMIN/store_basic/screenshots/00_start/001.png"
+    ],
+    "pass": true,
+    "note": "StoreBranchSettingPage",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "店家基本參數設定的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "clickAdjust",
+      "clickBinding",
+      "clickCancel",
+      "clickCopyStore",
+      "clickLinkStore",
+      "clickSave",
+      "getRemoteRegions",
+      "getRemoteStores",
+      "getRemoteStoresAndRegions",
+      "lookup",
+      "lookupStores",
+      "onFilterChange",
+      "updateDetail",
+      "updateStoreDetail"
+    ],
+    "expect_source": "store_basic-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據 `Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-工程對應-clicksave` 的內容，店家基本參數設定的 `clickSave` 呼叫鏈經過以下方法：\n\n`StoresSettingAdjustComponent.clickSave()` → `StoreBoard.updateStoreDetail()` → `StoreService.updateDetail()` → `StoreApi.updateDetail()` → `PATCH /v1/store/{0}/detail` → `StoreBoar",
+    "sources": [
+      "Store.POS/ui_inventory/_modules/ADMIN-store_basic-overview.md#店家基本參數編輯畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_basic-overview.md#店家基本參數檢視畫面",
+      "Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_basic-overview.md#店家基本參數設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-操作程序",
+      "Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/store_basic-procedure.md#店家基本參數設定-工程對應-services-apis"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/store_basic/output/store_basic/img/ADMIN-store_basic-F01/ADMIN-store_basic-F01-S01-store_detail.jpg"
+    ],
+    "pass": true,
+    "note": "clickSave",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "店家群組設定會打哪支 API?",
+    "expect_any": [
+      "DELETE /v1/region/{0}",
+      "GET /v1/region",
+      "GET /v1/store",
+      "PATCH /v1/region/{0}",
+      "POST /v1/region"
+    ],
+    "expect_source": "store_group-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "店家群組設定會呼叫的 API 端點包括：\n- GET /v1/region\n- PATCH /v1/region/{0}\n- GET /v1/store\n- DELETE /v1/region/{0}\n- POST /v1/region\n\n[Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-工程對應-engineering-context]",
+    "sources": [
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_group-overview.md#店家群組列表與設定畫面",
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_group-overview.md#店家群組設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-工程對應-services-apis",
+      "Store.POS/ui_inventory/ddcf1a2c42-ui_inventory.md#店家群組列表與設定的輸入欄位",
+      "Store.POS/ui_inventory/ddcf1a2c42-ui_inventory.md#店家群組列表與設定的按鈕"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/store_group/output/store_group/img/ADMIN-store_group-F01/ADMIN-store_group-F01-S01-store_group_list.jpg"
+    ],
+    "pass": true,
+    "note": "DELETE /v1/region/{0}",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "店家群組設定是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "StoreGroupAdjustPage",
+      "StoreGroupCreatePage",
+      "StoreGroupPage",
+      "StoreGroupStoreList",
+      "StoreGroupTab"
+    ],
+    "expect_source": "store_group-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件，店家群組設定的畫面宿主（ViewModel）包含：`StoreGroupPage`、`StoreGroupAdjustPage`、`StoreGroupCreatePage`、`StoreGroupStoreList` 與 `StoreGroupTab` [Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-工程對應-viewmodels]。",
+    "sources": [
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-工程對應-viewmodels",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_group-overview.md#店家群組列表與設定畫面",
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-完整步驟總覽",
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-工程對應-services-apis",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_group-overview.md#店家群組設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-操作程序",
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-工程對應-commands"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/store_group/output/store_group/img/ADMIN-store_group-F01/ADMIN-store_group-F01-S01-store_group_list.jpg"
+    ],
+    "pass": true,
+    "note": "StoreGroupAdjustPage",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "店家群組設定的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "addStoreGroups",
+      "askDeleteResult",
+      "clickAdjust",
+      "clickBinding",
+      "clickCancel",
+      "clickCreate",
+      "clickDelete",
+      "clickSave",
+      "clickSelect",
+      "clickSortDialog",
+      "clickSwitchMode",
+      "getRemoteRegions",
+      "getRemoteStores",
+      "getRemoteStoresAndRegions",
+      "lookup",
+      "lookupStores",
+      "onFilterChange",
+      "onSelect",
+      "remove",
+      "removeStoreGroup",
+      "update",
+      "updateStoreGroup"
+    ],
+    "expect_source": "store_group-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件內容，店家群組設定的呼叫鏈根據不同的操作（`clickSave`）有以下兩種路徑：\n\n1.  **針對 `StoreGroupAdjustPage.clickSave()` 的呼叫鏈：**\n    `StoreGroupAdjustPage.clickSave()` → `StoreBoard.updateStoreGroup()` → `RegionService.update()` → `RegionApi.update()` → `PATCH /v1/region/{0}` → `StoreBoard.getRemoteStoresAndRegions()` → `Stor",
+    "sources": [
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_group-overview.md#店家群組列表與設定畫面",
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_group-overview.md#店家群組設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-工程對應-clicksave",
+      "Store.POS/ui_inventory/ddcf1a2c42-ui_inventory.md#店家群組列表與設定的按鈕",
+      "Store.POS/procedures/ADMIN/store_group-procedure.md#店家群組設定-工程對應-clicksave-2"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/store_group/output/store_group/img/ADMIN-store_group-F01/ADMIN-store_group-F01-S01-store_group_list.jpg"
+    ],
+    "pass": true,
+    "note": "addStoreGroups",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "店家共用參數設定會打哪支 API?",
+    "expect_any": [
+      "GET /v1/store/common",
+      "PATCH /v1/store/common"
+    ],
+    "expect_source": "store_shared-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "店家共用參數設定會呼叫以下 API 端點：\n- GET /v1/store/common\n- PATCH /v1/store/common\n\nSources:\n[Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-工程對應-engineering-context]",
+    "sources": [
+      "Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_shared-overview.md#店家共用參數設定-module-按鈕與畫面索引",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_shared-overview.md#店家共用參數檢視畫面",
+      "Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-工程對應-services-apis",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_shared-overview.md#店家共用參數編輯畫面",
+      "Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-完整步驟總覽",
+      "Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-工程對應-viewmodels",
+      "Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-工程對應-clicksave"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/store_shared/output/store_shared/img/ADMIN-store_shared-F01/ADMIN-store_shared-F01-S01-shared_parameters.jpg"
+    ],
+    "pass": true,
+    "note": "GET /v1/store/common",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "店家共用參數設定是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "StoreCommonSettingPage"
+    ],
+    "expect_source": "store_shared-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "店家共用參數設定的畫面宿主為 `StoreCommonSettingPage` [Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-工程對應-viewmodels]。",
+    "sources": [
+      "Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-工程對應-viewmodels",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_shared-overview.md#店家共用參數檢視畫面",
+      "Store.POS/ui_inventory/9f00d7c717-ui_inventory.md#店家共用參數檢視的按鈕",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_shared-overview.md#店家共用參數設定-module-按鈕與畫面索引",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_shared-overview.md#店家共用參數編輯畫面",
+      "Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-完整步驟總覽",
+      "Store.POS/ui_inventory/9f00d7c717-ui_inventory.md#店家共用參數檢視-ui-控制項清單"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/store_shared/output/store_shared/img/ADMIN-store_shared-F01/ADMIN-store_shared-F01-S01-shared_parameters.jpg",
+      "Store.POS/_assets/modules/ADMIN/store_shared/screenshots/00_start/001.png"
+    ],
+    "pass": true,
+    "note": "StoreCommonSettingPage",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "店家共用參數設定的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "clickAbort",
+      "clickEdit",
+      "clickSave",
+      "getCommonSetting",
+      "lookupCommon",
+      "onTypeChange",
+      "requestData",
+      "updateCommon",
+      "updateCommonSetting"
+    ],
+    "expect_source": "store_shared-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件，店家共用參數設定的呼叫鏈包含以下方法：\n\n`StoreCommonSettingPage.clickSave()` → `StoreBoard.updateCommonSetting()` → `StoreService.updateCommon()` → `StoreApi.updateCommon()` → `PATCH /v1/store/common` → `StoreCommonSettingPage.requestData()` → `StoreBoard.getCommonSetting()` → `StoreService.lookupCommon()` → `",
+    "sources": [
+      "Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_shared-overview.md#店家共用參數檢視畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_shared-overview.md#店家共用參數設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-工程對應-services-apis",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_shared-overview.md#店家共用參數編輯畫面",
+      "Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-工程對應-viewmodels",
+      "Store.POS/procedures/ADMIN/store_shared-procedure.md#店家共用參數設定-完整步驟總覽"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/store_shared/output/store_shared/img/ADMIN-store_shared-F01/ADMIN-store_shared-F01-S01-shared_parameters.jpg"
+    ],
+    "pass": true,
+    "note": "clickSave",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "店家桌次設定會打哪支 API?",
+    "expect_any": [
+      "DELETE /v1/table/{0}",
+      "GET /v1/table/stores/{0}",
+      "PATCH /v1/table/{0}"
+    ],
+    "expect_source": "store_tables-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "店家桌次設定會呼叫的 API 端點包括：\n- GET /v1/table/stores/{0}\n- PATCH /v1/table/{0}\n- DELETE /v1/table/{0}\n\n[Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-工程對應-engineering-context]",
+    "sources": [
+      "Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_tables-overview.md#店家桌次列表與設定畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_tables-overview.md#店家桌次設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_tables-overview.md#桌次設定變更確認畫面",
+      "Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-工程對應-clicksave",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_tables-overview.md#桌次設定編輯畫面",
+      "Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-工程對應-services-apis"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/store_tables/output/store_tables/img/ADMIN-store_tables-F01/ADMIN-store_tables-F01-S01-table_list.jpg"
+    ],
+    "pass": true,
+    "note": "DELETE /v1/table/{0}",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "店家桌次設定是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "StoreTableSettingAdjustPage",
+      "StoreTableSettingTab"
+    ],
+    "expect_source": "store_tables-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "店家桌次設定的畫面宿主為 `StoreTableSettingAdjustPage` 與 `StoreTableSettingTab` (Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-工程對應-viewmodels)。",
+    "sources": [
+      "Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_tables-overview.md#店家桌次列表與設定畫面",
+      "Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-完整步驟總覽",
+      "Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-工程對應-viewmodels",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_tables-overview.md#店家桌次設定-module-按鈕與畫面索引",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_tables-overview.md#桌次設定變更確認畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_tables-overview.md#桌次設定編輯畫面",
+      "Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-工程對應-services-apis"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/store_tables/output/store_tables/img/ADMIN-store_tables-F01/ADMIN-store_tables-F01-S01-table_list.jpg"
+    ],
+    "pass": true,
+    "note": "StoreTableSettingAdjustPage",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "店家桌次設定的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "askDeleteResult",
+      "clickAdjust",
+      "clickBinding",
+      "clickCancel",
+      "clickCreate",
+      "clickDelete",
+      "clickSave",
+      "getData",
+      "getStoreTables",
+      "initData",
+      "onFilterChange",
+      "removeStoreTables",
+      "removeTable",
+      "updateStoreTables",
+      "updateTable"
+    ],
+    "expect_source": "store_tables-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據 `Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-工程對應-clicksave` 的內容，`clickSave` 的呼叫鏈經過以下方法：\n\n`StoreTableSettingAdjustPage.clickSave()` → `StoreTableBoard.updateStoreTables()` → `StoreTableService.updateStoreTables()` → `StoreTableApi.updateTable()` → `PATCH /v1/table/{0}` → `StoreTab",
+    "sources": [
+      "Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_tables-overview.md#店家桌次列表與設定畫面",
+      "Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_tables-overview.md#店家桌次設定-module-按鈕與畫面索引",
+      "Store.POS/procedures/ADMIN/store_tables-procedure.md#店家桌次設定-工程對應-clicksave",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_tables-overview.md#桌次設定編輯畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-store_tables-overview.md#桌次設定變更確認畫面"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/store_tables/output/store_tables/img/ADMIN-store_tables-F01/ADMIN-store_tables-F01-S01-table_list.jpg"
+    ],
+    "pass": true,
+    "note": "clickSave",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "api",
+    "area": "ADMIN",
+    "question": "供應時段會打哪支 API?",
+    "expect_any": [
+      "DELETE /v1/business/period/{0}",
+      "GET /v1/business/periods",
+      "PATCH /v1/business/period/{0}",
+      "POST /v1/business/period"
+    ],
+    "expect_source": "supply_period-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "供應時段會呼叫的 API 端點包括：\n- GET /v1/business/periods\n- PATCH /v1/business/period/{0}\n- DELETE /v1/business/period/{0}\n- POST /v1/business/period\n\n[Store.POS/procedures/ADMIN/supply_period-procedure.md#供應時段-工程對應-engineering-context]",
+    "sources": [
+      "Store.POS/ui_inventory/_modules/ADMIN-supply_period-overview.md#供應時段變更確認畫面",
+      "Store.POS/procedures/ADMIN/supply_period-procedure.md#供應時段-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-supply_period-overview.md#基本供應時段列表與設定畫面",
+      "Store.POS/procedures/ADMIN/supply_period-procedure.md#供應時段-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-supply_period-overview.md#新增供應時段表單畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-supply_period-overview.md#供應時段編輯表單畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-supply_period-overview.md#供應時段-module-按鈕與畫面索引",
+      "Store.POS/ui_inventory/2fb7879a77-ui_inventory.md#基本供應時段列表與設定的按鈕"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/supply_period/output/supply_period/img/ADMIN-supply_period-F01/ADMIN-supply_period-F01-S01-supply_period_list.jpg"
+    ],
+    "pass": true,
+    "note": "DELETE /v1/business/period/{0}(重試 2 次後成功)",
+    "attempts": 3,
+    "upstream_error": ""
+  },
+  {
+    "kind": "viewmodel",
+    "area": "ADMIN",
+    "question": "供應時段是由哪個 ViewModel 或元件處理?",
+    "expect_any": [
+      "BasicPeriodAdjustPage",
+      "BasicPeriodCreatePage",
+      "BasicPeriodTab",
+      "PeriodPage"
+    ],
+    "expect_source": "supply_period-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的上下文，供應時段相關的符號與元件資訊如下：\n\n- **Symbol Index（符號索引）**：包含 `PeriodPage`、`BasicPeriodTab`、`BasicPeriodAdjustPage`、`BasicPeriodCreatePage`、`PeriodBoard` 與 `PeriodService` 等。\n- **ViewModel/元件相關資訊**：上下文中的工程對應節點列出了 `PeriodPage`、`BasicPeriodTab`、`BasicPeriodAdjustPage`、`BasicPeriodCreatePage`、`PeriodBoard` 與",
+    "sources": [
+      "Store.POS/ui_inventory/_modules/ADMIN-supply_period-overview.md#供應時段變更確認畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-supply_period-overview.md#基本供應時段列表與設定畫面",
+      "Store.POS/procedures/ADMIN/supply_period-procedure.md#供應時段-工程對應-engineering-context",
+      "Store.POS/ui_inventory/_modules/ADMIN-supply_period-overview.md#供應時段編輯表單畫面",
+      "Store.POS/procedures/ADMIN/supply_period-procedure.md#供應時段-完整步驟總覽",
+      "Store.POS/ui_inventory/_modules/ADMIN-supply_period-overview.md#新增供應時段表單畫面",
+      "Store.POS/ui_inventory/2fb7879a77-ui_inventory.md#基本供應時段列表與設定的按鈕",
+      "Store.POS/ui_inventory/59712b7286-ui_inventory.md#供應時段變更確認的按鈕"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/supply_period/output/supply_period/img/ADMIN-supply_period-F01/ADMIN-supply_period-F01-S01-supply_period_list.jpg"
+    ],
+    "pass": true,
+    "note": "BasicPeriodAdjustPage",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "callchain",
+    "area": "ADMIN",
+    "question": "供應時段的呼叫鏈經過哪些方法?",
+    "expect_any": [
+      "addPeriod",
+      "askDeleteResult",
+      "clickAdjust",
+      "clickBinding",
+      "clickCancel",
+      "clickCreate",
+      "clickDelete",
+      "clickSave",
+      "clickSwitchMode",
+      "deletePeriod",
+      "getPeriods",
+      "getRemotePeriods",
+      "onSelect",
+      "updatePeriod"
+    ],
+    "expect_source": "supply_period-procedure",
+    "expect_image": "true",
+    "grounded": true,
+    "answer": "根據提供的文件內容，供應時段的呼叫鏈（Call Chain）包含以下兩種情況：\n\n1.  **執行儲存（clickSave）時的呼叫鏈**：\n    `BasicPeriodAdjustPage.clickSave()` → `PeriodBoard.updatePeriod()` → `PeriodService.updatePeriod()` → `periodApi.updatePeriod()` → `PATCH /v1/business/period/{0}` → `PeriodBoard.getRemotePeriods()` → `PeriodService.getPeriods",
+    "sources": [
+      "Store.POS/procedures/ADMIN/supply_period-procedure.md#供應時段-工程對應-services-apis",
+      "Store.POS/procedures/ADMIN/supply_period-procedure.md#供應時段-工程對應-clicksave",
+      "Store.POS/procedures/ADMIN/supply_period-procedure.md#供應時段-工程對應-clicksave-2",
+      "Store.POS/ui_inventory/_modules/ADMIN-supply_period-overview.md#供應時段變更確認畫面",
+      "Store.POS/procedures/ADMIN/supply_period-procedure.md#供應時段-工程對應-engineering-context",
+      "Store.POS/procedures/ADMIN/supply_period-procedure.md#供應時段-工程對應-viewmodels",
+      "Store.POS/ui_inventory/_modules/ADMIN-supply_period-overview.md#供應時段編輯表單畫面",
+      "Store.POS/ui_inventory/_modules/ADMIN-supply_period-overview.md#基本供應時段列表與設定畫面"
+    ],
+    "images": [
+      "Store.POS/_assets/modules/ADMIN/supply_period/output/supply_period/img/ADMIN-supply_period-F01/ADMIN-supply_period-F01-S01-supply_period_list.jpg"
+    ],
+    "pass": true,
+    "note": "addPeriod",
+    "attempts": 1,
+    "upstream_error": ""
+  },
+  {
+    "kind": "must_not_infer",
+    "area": "-",
+    "question": "會員積點兌換打哪支 API?",
+    "expect_any": [],
+    "expect_source": "",
+    "expect_image": "false",
+    "grounded": false,
+    "answer": "提供的上下文內容中，並未包含關於「會員積點兌換」相關的 API 端點或符號資訊。",
+    "sources": [],
+    "images": [],
+    "pass": true,
+    "note": "",
+    "attempts": 1,
+    "upstream_error": ""
+  }
+]

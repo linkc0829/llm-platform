@@ -47,3 +47,8 @@ eval_out.json
 .claude/
 .agents/
 
+# 驗收原始輸出。要保留的那一輪在 metrics/(理由見 metrics/README.md);
+# 根目錄這些是跑到一半的中間產物,語料一改就沒有比較基準。
+/eng_eval*.json
+/eval_out*.json
+/kb-validation-*.json
