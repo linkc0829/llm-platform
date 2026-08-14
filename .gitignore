@@ -13,12 +13,22 @@ coverage.html
 # Env
 .env
 .env.local
+.env.openai
+
+# Generated knowledge-base index (rebuilt by POST /index; holds a full copy of docs/)
+.kb/
+log/
+docs/.kbimport-*/
+eval/.kbimport-*/
+*.bak/
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+.codex
+.agents
 
 # OS
 .DS_Store
@@ -29,3 +39,21 @@ Thumbs.db
 
 # Vendor
 /vendor/
+
+docs/
+eval/
+# 錨在根目錄:不加斜線會連 .claude/skills/*/templates/run_eval.py 一起擋掉
+/run_eval.py
+/eval_out.json
+.agents/
+
+# .claude/ 本身要進版控(skills 是驗收流程的一部分),但這兩樣不進:
+# local 是每台機器自己的許可清單,pycache 是編譯產物。
+.claude/settings.local.json
+.claude/**/__pycache__/
+
+# 驗收原始輸出。要保留的那一輪在 metrics/(理由見 metrics/README.md);
+# 根目錄這些是跑到一半的中間產物,語料一改就沒有比較基準。
+/eng_eval*.json
+/eval_out*.json
+/kb-validation-*.json

@@ -1,0 +1,124 @@
+---
+name: ui-kb-eng-validate
+description: Validate that a UI KB answers ENGINEERING questions correctly through the search_kb MCP tool — the P4 acceptance where a coding agent asks 「登入打哪支 API」 and must get back a source-verified symbol such as LoginViewModel / POST /terminal/v1/authorization/signin plus the screenshot. Builds ground truth from the Verified lines of each procedure doc's Engineering Context, then drives the MCP stdio server and diagnoses failures as data / retrieval / model. Use after ui-kb-validate has cleared 問答品質 and the KB is being exposed as an agent tool. Triggers "驗證 MCP tool", "驗收 search_kb", "agent 問 API 回什麼", "工程問題驗證", "打哪支 API 驗收", "validate kb mcp tool", "engineering question eval".
+---
+
+# 驗證 KB 的工程問答(MCP tool)
+
+`ui-kb-validate` 量的是「人問操作、KB 答得出步驟嗎」。
+這支量的是另一個客戶:**coding agent 問符號,KB 答不答得出經過原始碼驗證的符號**。
+驗收條件出自規劃頁 P4 —— agent 問「登入打哪支 API」→ 回 `LoginViewModel.GetTokenNow` **加截圖**。
+
+兩個差異決定了這支不能沿用前一支:
+
+| | 問答品質(ui-kb-validate) | 工程問答(本skill) |
+|---|---|---|
+| 答案形態 | 中文敘述,靠人判斷對不對 | **精確符號**,可字串比對 → 判定是確定性的 |
+| 通道 | HTTP `/chat` | **MCP stdio**,多了 handshake / tool schema / stdout 純淨度 |
+| 真值來源 | 人審 | `## 工程對應` 的 **Verified** 行(已對原始碼驗證) |
+
+## 兩個階段
+
+### 階段一:建真值(`templates/build_eng_eval.py`)
+
+改頂端 `KB_DIR` 後執行。它從每份 `kb/procedures/<page_code>/<module_code>-procedure.md` 的
+`## 工程對應(Engineering Context)` 抽 endpoint / ViewModel / 方法名,產 `eng_eval.yaml`。
+
+**只認 `**Verified ...**` 開頭的行。** `Possible API/Functions` 是
+codebase-verify 之前的猜測,拿它當真值等於用幻覺驗幻覺 —— selftest 有一條專門鎖這件事。
+
+輸出的涵蓋表就是**資料側的體檢**:某區 `api=—` 且 `vm=—`,代表這區根本沒有可驗證的工程資料,
+問題出在 `ui-gherkin-codebase-verify` 沒跑或沒找到,**不要**拿它去測檢索。
+沒有真值的面向不出題 —— 出了就是在量自己不知道的東西。
+
+### 階段二:實跑(`templates/run_eng_eval.py`)
+
+先 `go build -o bin/kbmcp.exe ./cmd/kbmcp`,改頂端 `REPO` / `KB_DIR` / `ENV_FILE`,執行。
+
+`kbmcp` 只讀環境變數、不自己載 `.env`,而且 `KB_INDEX_DIR` 是相對路徑。
+runner 因此代為載入 `ENV_FILE` 並以 repo 根目錄當 cwd 啟動子程序 ——
+少了任一項,子程序會在 handshake 前就死(`OPENAI_API_KEY is required`)或載不到索引。
+**`ENV_FILE` 要指向當初建索引用的那份設定**:換成不同 embedding 模型的 `.env`,
+向量對不上,量到的會是假的檢索失敗。
+
+輸出用管線導向檔案時要加 `python -u`。`flush=True` 只管 `print`,
+stdout 一旦被重導仍會整塊緩衝 —— 實測踩過「結果檔已經到第 15 題、console 一片空白」,
+看起來像卡死,其實只是串行 24 題各 7–90 秒。
+
+刻意走 MCP 而不是 `/chat`,因為這三種壞法只有 MCP 這條路看得到:
+- server 把 log 印到 **stdout** → JSON-RPC 當場毀掉(腳本會明講是 stdout 被污染,不會只回一個 parse error)
+- tool 沒註冊、schema 改名 → `tools/call` 直接錯
+- 索引沒載入就啟動 → 全部婉拒
+
+**單題有 deadline(`CALL_TIMEOUT`),逾時記為失敗、重啟子程序後續跑,每題即時寫檔。**
+沒有 deadline 的驗收會拿不到任何部分結果;逾時後不重啟,server 端那次生成仍佔著 stdio,
+後面每題各賠一個 timeout。
+
+### 逾時的判讀:先懷疑 client,不要先怪模型
+
+`kbmcp` 每次 `search_kb` 都往 **stderr** 記一筆(query、sources、strategy)。
+接了 `stderr=PIPE` 卻不讀,管線緩衝區(Windows 約 4–8KB)填滿後 server 會
+**卡在寫 stderr** 而完全停止回應。表現極具欺騙性:每輪都在**相同位置**的那幾題逾時
+(累積 log 量相同),看起來像「特定問題讓模型變慢」。實測那兩題單獨跑只要 3–5 秒。
+runner 因此有一條專門排空 stderr 的執行緒,selftest 用一個狂寫 stderr 的假 server 鎖住 ——
+**拿掉排空,那條 selftest 會逾時失敗。別把它當成多餘的執行緒刪掉。**
+
+所以看到逾時的順序是:①runner 有沒有排空 stderr、有沒有重啟 →
+②把那幾題**單獨**跑一次(這是最快的判別:單獨很快 = client 問題,單獨也慢 = 生成端)→
+③才考慮生成端與 `CALL_TIMEOUT`。
+
+每題四個斷言,缺一不可:`grounded` / 答案含**任一**已驗證符號 / `sources` 引到該區文件 / `images` 非空。
+**截圖是 P4 明列的驗收項**,符號對但沒圖仍算失敗。
+
+## 判讀:三種瓶頸
+
+| 現象 | 瓶頸 | 交回 |
+|---|---|---|
+| 階段一涵蓋表該區全空 | **資料** | `ui-gherkin-codebase-verify` |
+| **婉拒**,且答案本文唸出了已驗證符號 | **模型** | 換生成模型或調 prompt,別再改資料 |
+| **婉拒**,且答案完全沒提到該符號 | **無法由 MCP 判定** | 跑 retrieval probe 再判 |
+| 答了(grounded=true)但 sources 引到別的文件 | **檢索** | `ui-kb-export`(chunk 與標題) |
+| 答了且 sources 正確,卻改寫或幻覺符號 | **模型** | 換生成模型,別再改資料 |
+
+> ⚠️ **婉拒時不要看 `sources`。** 服務會把它清成空的
+> (`service.go`:「A refusal carries no usable sources」),空清單**不等於**沒檢索到。
+> 舊版判讀表要求「婉拒且 sources 沒引到該區文件 → 檢索問題」,而婉拒時 sources 恆為空,
+> 所以每一題婉拒都會被判成檢索問題 —— 實測「點餐會打哪支 API?」就是這樣被誤判,
+> 但它的答案裡逐字列出了兩個期待的 endpoint,檢索其實成功了。
+>
+> 婉拒時唯一有資訊的是**答案本文**:模型把已驗證符號唸出來又說「無法確定」,
+> 就證明證據送到了,那是模型問題。
+
+腳本每個 FAIL 都直接印出判定,不要自己重猜。
+
+## 紀律
+
+- **負例(`must_not_infer`)失敗最優先。** 對人瞎掰是答錯,對 coding agent 瞎掰一支 API 是
+  它會照著寫程式 —— 比答不出來糟得多。這條退步就停下來,別管通過率。
+- **符號比對用原字串,不要放寬成模糊比對。** 工程問答的價值就在精確;
+  `LoginViewModel` 和 `LoginViewModelBase` 是兩個東西。
+  唯一的例外是 endpoint 拆成 method 與 path 兩段比對 —— 模型會寫成
+  「透過 POST 請求 \`/terminal/v1/order/{id}/void\`」,path 一字不差只是中間插了字,
+  整串比會把格式差異記成錯誤。**path 本身仍必須完全相同。**
+- **改判定邏輯要在看到結果之後特別小心。** 上面那條例外就是看了失敗案例才加的:
+  可以接受是因為它修的是「量錯東西」(格式 vs 正確性),不是因為它讓分數變好看。
+  分不清楚時,寧可留著失敗並在報告裡註明。
+- 弱模型有雜訊(同一份資料實測跑出過 14/17/18 分)。**跑兩次**再下結論;
+  但 `sources` 命中率是確定性的,單次即可採信 —— 判斷檢索有沒有進步看它,不看通過率。
+- 兩支腳本都有 `--selftest`,改判定邏輯後先跑它。
+
+## 位置:repo 層,不在 UI 產線裡
+
+UI 產線止於 `ui-kb-export`,交付 `kb/` 與該版資料長出的 `*-eval.yaml`。
+本 skill 與 `ui-kb-validate` 都是**拿那份交付物在 KB repo 裡驗收** ——
+需要索引、模型端點、`kbmcp` binary,全是 repo 的東西。
+
+```
+[UI 產線] … → export_kb  ──kb/ + *-eval.yaml──▶  [KB repo] ui-kb-validate → 本skill
+```
+
+repo 層內部先跑 `ui-kb-validate`:那邊量的檢索問題(樣板段落搶 top-k)會同樣打在這裡,
+先修好再來,否則量到的是同一個瓶頸的兩次投影。
+
+**資料側的修正要回到產線**(`export_kb.py` 的 chunk 與標題),不要在 repo 裡改 `kb/`
+的產物 —— 下次 export 會覆蓋掉。實測有效的修正都應該落在 `ui-kb-export` 的樣板裡。

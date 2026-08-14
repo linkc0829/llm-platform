@@ -9,7 +9,13 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/gin-gonic/gin"
+
+	"go.uber.org/zap"
+
+	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/bootstrap"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
+	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/mcpserver"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/config"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/httpserver"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/logger"
@@ -21,41 +27,42 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	lg, err := logger.New(logger.Config{Level: cfg.Logger.Level, Encoding: cfg.Logger.Encoding})
+	lg, err := logger.New(logger.Config{Level: cfg.Logger.Level, Encoding: cfg.Logger.Encoding, Output: cfg.Logger.Output})
 	if err != nil {
 		log.Fatalf("logger: %v", err)
 	}
 
+	// The service logs each answered query through zap's global. Without this it
+	// keeps the no-op default and the query log is silently empty.
+	zap.ReplaceGlobals(lg)
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	repo := kb.NewMarkdownRepo("docs", ".kb")
-	vecRepo := kb.NewVectorRepo(".kb")
-	sessions := kb.NewInProcStore()
-	var llm kb.LLM
-	var embedder kb.Embedder
 	if strings.EqualFold(cfg.OpenAI.LLMMode, "fake") {
 		lg.Warn("using fake LLM mode; responses are deterministic and do not call OpenAI")
-		fake := kb.NewFakeLLM()
-		llm = fake
-		embedder = fake
-	} else {
-		oai := kb.NewOpenAIClient(cfg.OpenAI.APIKey)
-		llm = oai
-		embedder = oai
 	}
-	svc := kb.NewService(repo, llm, embedder, vecRepo, sessions)
+	svc := bootstrap.NewKBService(cfg)
 	if err := svc.LoadOnStartup(ctx); err != nil {
-		if errors.Is(err, kb.ErrNotIndexed) {
+		switch {
+		case errors.Is(err, kb.ErrNotIndexed):
 			lg.Warn("knowledge base not indexed yet; POST /index to build it")
-		} else {
+		case errors.Is(err, kb.ErrIndexStale):
+			lg.Warn("index is stale; POST /index to rebuild it")
+		case errors.Is(err, kb.ErrVectorsIgnored):
+			lg.Warn("vector index is stale; POST /index to rebuild it")
+		default:
 			lg.Sugar().Fatalf("load index: %v", err)
 		}
 	}
-	h := kb.NewHandler(svc)
+	h := kb.NewHandler(svc, lg)
 
 	engine := httpserver.New(lg)
 	kb.RegisterRoutes(engine.Group(""), h)
+	mcpHandler := mcpserver.NewStreamableHTTPHandler(svc, lg)
+	engine.GET("/mcp", gin.WrapH(mcpHandler))
+	engine.POST("/mcp", gin.WrapH(mcpHandler))
+	engine.DELETE("/mcp", gin.WrapH(mcpHandler))
 
 	srv := httpserver.Wrap(engine, httpserver.Config{Port: cfg.HTTP.Port}, lg)
 

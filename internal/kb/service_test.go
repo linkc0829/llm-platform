@@ -6,6 +6,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 type fakeSectionStore struct {
@@ -72,6 +76,7 @@ func (f *fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, er
 }
 
 type fakeVectorStore struct {
+	loadModel   string
 	loadVectors map[string][]float32
 	loadErr     error
 	saveErr     error
@@ -79,8 +84,8 @@ type fakeVectorStore struct {
 	saved       map[string][]float32
 }
 
-func (f *fakeVectorStore) Load(_ context.Context) (map[string][]float32, error) {
-	return f.loadVectors, f.loadErr
+func (f *fakeVectorStore) Load(_ context.Context) (string, map[string][]float32, error) {
+	return f.loadModel, f.loadVectors, f.loadErr
 }
 
 func (f *fakeVectorStore) Save(_ context.Context, model string, vectors map[string][]float32) error {
@@ -90,14 +95,14 @@ func (f *fakeVectorStore) Save(_ context.Context, model string, vectors map[stri
 }
 
 func TestServiceIndexBuildsAndPersistsIndex(t *testing.T) {
-	section, err := NewSection("refund_policy.md", "Refund Timeline", "Refunds take 5-7 business days.")
+	section, err := NewSection("refund_policy.md", "Refund Timeline", "Refunds take 5-7 business days.", nil, nil)
 	if err != nil {
 		t.Fatalf("NewSection() error = %v, want nil", err)
 	}
 	store := &fakeSectionStore{parseSections: []Section{section}, parseFiles: 3}
 	embedder := &fakeEmbedder{vectors: map[string][]float32{section.Body(): {1, 0}}}
 	vectors := &fakeVectorStore{}
-	svc := NewService(store, nil, embedder, vectors, nil)
+	svc := NewService(store, nil, embedder, vectors, nil, "configured-model")
 
 	files, sections, err := svc.Index(context.Background())
 	if err != nil {
@@ -109,8 +114,8 @@ func TestServiceIndexBuildsAndPersistsIndex(t *testing.T) {
 	if len(store.saved) != 1 || store.saved[0].Citation() != section.Citation() {
 		t.Errorf("Service.Index() saved = %#v, want parsed section", store.saved)
 	}
-	if vectors.savedModel != embeddingModel || len(vectors.saved) != 1 {
-		t.Errorf("Service.Index() saved vectors model/count = %q/%d, want %q/1", vectors.savedModel, len(vectors.saved), embeddingModel)
+	if vectors.savedModel != "configured-model" || len(vectors.saved) != 1 {
+		t.Errorf("Service.Index() saved vectors model/count = %q/%d, want configured-model/1", vectors.savedModel, len(vectors.saved))
 	}
 	_, corpus, indexedVectors, ready := svc.indexSnapshot()
 	if !ready || corpus.N != 1 || len(indexedVectors) != 1 {
@@ -119,17 +124,108 @@ func TestServiceIndexBuildsAndPersistsIndex(t *testing.T) {
 }
 
 func TestServiceLoadOnStartupHandlesMissingIndex(t *testing.T) {
-	svc := NewService(&fakeSectionStore{loadErr: ErrNotIndexed}, nil, nil, nil, nil)
+	svc := NewService(&fakeSectionStore{loadErr: ErrNotIndexed}, nil, nil, nil, nil, "test-model")
 	err := svc.LoadOnStartup(context.Background())
 	if !errors.Is(err, ErrNotIndexed) {
 		t.Errorf("Service.LoadOnStartup() error = %v, want ErrNotIndexed", err)
 	}
 }
 
+func TestServiceLoadOnStartupIgnoresMismatchedVectorModel(t *testing.T) {
+	sections := mustSampleSections(t)
+	llm := &fakeLLM{answer: "answer"}
+	vectors := &fakeVectorStore{loadModel: "old-model", loadVectors: map[string][]float32{sections[0].Citation(): {1, 0}}}
+	svc := NewService(&fakeSectionStore{loadSections: sections}, llm, nil, vectors, NewInProcStore(), "new-model")
+
+	err := svc.LoadOnStartup(context.Background())
+	if !errors.Is(err, ErrVectorsIgnored) {
+		t.Fatalf("Service.LoadOnStartup() error = %v, want ErrVectorsIgnored", err)
+	}
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
+	if err != nil {
+		t.Fatalf("Service.Chat() error = %v, want nil", err)
+	}
+	if answer.Strategy() != "markdown" {
+		t.Errorf("Service.Chat() strategy = %q, want markdown", answer.Strategy())
+	}
+	if !answer.Grounded() {
+		t.Error("Service.Chat() grounded = false, want true for a plain answer")
+	}
+}
+
+// TestServiceChatStripsUngroundedSentinel locks the sentinel contract: when the
+// model leads a refusal with ungroundedSentinel despite retrieved context, the
+// service must report grounded=false and strip the marker, leaving the reason.
+func TestServiceChatStripsUngroundedSentinel(t *testing.T) {
+	sections := mustSampleSections(t)
+	llm := &fakeLLM{answer: ungroundedSentinel + " only a control list, no recorded steps"}
+	svc := NewService(&fakeSectionStore{loadSections: sections}, llm, nil, nil, NewInProcStore(), "test-model")
+	if err := svc.LoadOnStartup(context.Background()); err != nil {
+		t.Fatalf("Service.LoadOnStartup() error = %v, want nil", err)
+	}
+
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
+	if err != nil {
+		t.Fatalf("Service.Chat() error = %v, want nil", err)
+	}
+	if answer.Grounded() {
+		t.Error("Service.Chat() grounded = true, want false when the model leads with the ungrounded sentinel")
+	}
+	if got := answer.Text(); got != "only a control list, no recorded steps" {
+		t.Errorf("Service.Chat() answer = %q, want the sentinel stripped to its reason", got)
+	}
+	if len(answer.Sources()) != 0 {
+		t.Errorf("Service.Chat() sources = %v, want none — a refusal cites nothing", answer.Sources())
+	}
+}
+
+// TestServiceChatDetectsCorruptedSentinel covers what a weak model actually
+// emits. Asked for an exact token, llama3.1:8b answered "[UNEQUIPPED] ..." for a
+// refusal; the old exact prefix match missed it and reported grounded=true with
+// citations attached. Detection must tolerate the token being mangled or
+// decorated, while a real answer must never be mistaken for a refusal.
+func TestServiceChatDetectsCorruptedSentinel(t *testing.T) {
+	tests := []struct {
+		name         string
+		answer       string
+		wantGrounded bool
+		wantText     string
+	}{
+		{"exact_sentinel", "[UNGROUNDED] no recorded steps", false, "no recorded steps"},
+		{"observed_corruption_unequipped", "[UNEQUIPPED] the context lists controls only", false, "the context lists controls only"},
+		{"markdown_emphasis", "**[UNGROUNDED]** no steps recorded", false, "no steps recorded"},
+		{"answer_lead_in", "Answer: [UNGROUNDED] nothing to go on", false, "nothing to go on"},
+		{"grounded_answer_untouched", "Click Settings, then Printers.", true, "Click Settings, then Printers."},
+		{"bracket_in_prose_is_not_a_refusal", "Use the [UNIT] field on the form.", true, "Use the [UNIT] field on the form."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sections := mustSampleSections(t)
+			svc := NewService(&fakeSectionStore{loadSections: sections}, &fakeLLM{answer: tt.answer}, nil, nil, NewInProcStore(), "test-model")
+			if err := svc.LoadOnStartup(context.Background()); err != nil {
+				t.Fatalf("Service.LoadOnStartup() error = %v, want nil", err)
+			}
+			answer, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
+			if err != nil {
+				t.Fatalf("Service.Chat() error = %v, want nil", err)
+			}
+			if answer.Grounded() != tt.wantGrounded {
+				t.Errorf("Service.Chat() grounded = %v, want %v for %q", answer.Grounded(), tt.wantGrounded, tt.answer)
+			}
+			if got := answer.Text(); got != tt.wantText {
+				t.Errorf("Service.Chat() answer = %q, want %q", got, tt.wantText)
+			}
+			if !tt.wantGrounded && len(answer.Sources()) != 0 {
+				t.Errorf("Service.Chat() sources = %v, want none for a refusal", answer.Sources())
+			}
+		})
+	}
+}
+
 func TestServiceConcurrentIndexAndChatUsesConsistentSnapshot(t *testing.T) {
 	sections := mustSampleSections(t)
 	store := &fakeSectionStore{parseSections: sections, parseFiles: 3}
-	svc := NewService(store, NewFakeLLM(), nil, nil, NewInProcStore())
+	svc := NewService(store, NewFakeLLM(), nil, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, true)
 
 	var wg sync.WaitGroup
@@ -145,7 +241,7 @@ func TestServiceConcurrentIndexAndChatUsesConsistentSnapshot(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, _, err := svc.Chat(context.Background(), "How long do refunds take?", "session")
+			_, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
 			if err != nil {
 				t.Errorf("Service.Chat(concurrent %d) error = %v, want nil", i, err)
 			}
@@ -213,10 +309,10 @@ func TestServiceChat(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			llm := &fakeLLM{answer: tt.wantAnswer}
-			svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore())
+			svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
 			svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, tt.ready)
 
-			answer, sessionID, err := svc.Chat(context.Background(), tt.query, "session-1")
+			answer, sessionID, _, err := svc.ChatWithMetrics(context.Background(), tt.query, "session-1")
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Service.Chat(%q) error = %v, want %v", tt.query, err, tt.wantErr)
 			}
@@ -249,17 +345,17 @@ func TestServiceChat(t *testing.T) {
 }
 
 func TestServiceChatWeakScoreUsesVectorRetrieval(t *testing.T) {
-	bm25Section, err := NewSection("refund_policy.md", "Refund Timeline", "weak body")
+	bm25Section, err := NewSection("refund_policy.md", "Refund Timeline", "weak body", nil, nil)
 	if err != nil {
 		t.Fatalf("NewSection(bm25Section) error = %v, want nil", err)
 	}
-	vectorSection, err := NewSection("account_help.md", "Change Email Address", "nearest vector body")
+	vectorSection, err := NewSection("account_help.md", "Change Email Address", "nearest vector body", nil, nil)
 	if err != nil {
 		t.Fatalf("NewSection(vectorSection) error = %v, want nil", err)
 	}
 	llm := &fakeLLM{answer: "vector answer"}
 	embedder := &fakeEmbedder{vectors: map[string][]float32{"weak weak": {0, 1}}}
-	svc := NewService(&fakeSectionStore{}, llm, embedder, nil, NewInProcStore())
+	svc := NewService(&fakeSectionStore{}, llm, embedder, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot([]Section{bm25Section, vectorSection}, Corpus{
 		DocTokens: [][]string{{"weak"}, {"other"}},
 		DocFreq:   map[string]int{"weak": 1, "other": 1},
@@ -271,30 +367,97 @@ func TestServiceChatWeakScoreUsesVectorRetrieval(t *testing.T) {
 		vectorSection.Citation(): {0, 1},
 	}, true)
 
-	answer, _, err := svc.Chat(context.Background(), "weak weak", "session-1")
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "weak weak", "session-1")
 	if err != nil {
 		t.Fatalf("Service.Chat(weak vector query) error = %v, want nil", err)
 	}
-	if answer.Strategy() != "vector" {
-		t.Errorf("Service.Chat(weak vector query) strategy = %q, want vector", answer.Strategy())
+	if answer.Strategy() != "hybrid" {
+		t.Errorf("Service.Chat(weak vector query) strategy = %q, want hybrid", answer.Strategy())
 	}
 	gotSources := citationStrings(answer.Sources())
-	wantSources := []string{"account_help.md#change-email-address"}
-	if !sameStrings(gotSources, wantSources) {
-		t.Errorf("Service.Chat(weak vector query) sources = %#v, want %#v", gotSources, wantSources)
+	if !containsString(gotSources, vectorSection.Citation()) {
+		t.Errorf("Service.Chat(weak vector query) sources = %#v, want vector citation %q", gotSources, vectorSection.Citation())
 	}
-	if len(llm.sections) == 0 || llm.sections[0].Citation() != vectorSection.Citation() {
-		t.Errorf("Service.Chat(weak vector query) LLM first section = %#v, want %q", llm.sections, vectorSection.Citation())
+}
+
+func TestServiceChatAnswersChineseQueryWithZeroBM25(t *testing.T) {
+	sections := mustSampleSections(t)
+	query := "動態密碼如何登入"
+	llm := &fakeLLM{answer: "answer"}
+	embedder := &fakeEmbedder{vectors: map[string][]float32{query: {0, 1}}}
+	svc := NewService(&fakeSectionStore{}, llm, embedder, nil, NewInProcStore(), "test-model")
+	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{sections[0].Citation(): {1, 0}, sections[1].Citation(): {0, 1}}, true)
+
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), query, "session")
+	if err != nil {
+		t.Fatalf("Service.Chat() error = %v, want nil", err)
+	}
+	if answer.Strategy() != "vector" {
+		t.Errorf("Service.Chat() strategy = %q, want vector", answer.Strategy())
+	}
+}
+
+func TestServiceChatEnglishIdentifierUsesBM25(t *testing.T) {
+	section, err := NewSection("login.md", "Engineering Context", "LoginViewModel validates the dynamic password.", nil, nil)
+	if err != nil {
+		t.Fatalf("NewSection() error = %v, want nil", err)
+	}
+	llm := &fakeLLM{answer: "answer"}
+	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
+	svc.storeIndexSnapshot([]Section{section}, BuildCorpus([]Section{section}), map[string][]float32{}, true)
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "LoginViewModel LoginViewModel LoginViewModel LoginViewModel LoginViewModel", "session")
+	if err != nil {
+		t.Fatalf("Service.Chat() error = %v, want nil", err)
+	}
+	if !containsString(citationStrings(answer.Sources()), section.Citation()) {
+		t.Errorf("Service.Chat() sources = %#v, want %q", citationStrings(answer.Sources()), section.Citation())
+	}
+}
+
+func TestServiceChatDegradesWhenEmbedderFails(t *testing.T) {
+	sections := mustSampleSections(t)
+	llm := &fakeLLM{answer: "answer"}
+	svc := NewService(&fakeSectionStore{}, llm, &fakeEmbedder{err: errors.New("down")}, nil, NewInProcStore(), "test-model")
+	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{sections[0].Citation(): {1, 0}}, true)
+
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
+	if err != nil {
+		t.Fatalf("Service.Chat() error = %v, want nil", err)
+	}
+	if answer.Strategy() != "markdown" {
+		t.Errorf("Service.Chat() strategy = %q, want markdown", answer.Strategy())
+	}
+}
+
+func TestServiceChatReturnsCitedImages(t *testing.T) {
+	first, err := NewSection("login.md", "Password", "Password", nil, []string{"screenshots/login.png", "screenshots/shared.png"})
+	if err != nil {
+		t.Fatalf("NewSection(first) error = %v, want nil", err)
+	}
+	second, err := NewSection("reports.md", "Report", "Report", nil, []string{"screenshots/shared.png", "screenshots/report.png"})
+	if err != nil {
+		t.Fatalf("NewSection(second) error = %v, want nil", err)
+	}
+	svc := NewService(&fakeSectionStore{}, &fakeLLM{answer: "answer"}, nil, nil, NewInProcStore(), "test-model")
+	svc.storeIndexSnapshot([]Section{first, second}, BuildCorpus([]Section{first, second}), map[string][]float32{}, true)
+
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "Password Password Password Report Report Report", "session")
+	if err != nil {
+		t.Fatalf("Service.ChatWithMetrics() error = %v, want nil", err)
+	}
+	want := []string{"screenshots/login.png", "screenshots/shared.png", "screenshots/report.png"}
+	if !sameStrings(answer.Images(), want) {
+		t.Errorf("Service.ChatWithMetrics() images = %#v, want %#v", answer.Images(), want)
 	}
 }
 
 func TestServiceChatGeneratesSessionID(t *testing.T) {
 	sections := mustSampleSections(t)
 	llm := &fakeLLM{answer: "Refunds are processed within 5-7 business days."}
-	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore())
+	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, true)
 
-	_, sessionID, err := svc.Chat(context.Background(), "How long do refunds take?", "")
+	_, sessionID, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "")
 	if err != nil {
 		t.Fatalf("Service.Chat(empty session) error = %v, want nil", err)
 	}
@@ -306,14 +469,14 @@ func TestServiceChatGeneratesSessionID(t *testing.T) {
 func TestServiceChatUsesHistoryForFollowUpRetrieval(t *testing.T) {
 	sections := mustSampleSections(t)
 	llm := &fakeLLM{answer: "answer"}
-	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore())
+	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, true)
 
-	_, sessionID, err := svc.Chat(context.Background(), "How long do refunds take?", "")
+	_, sessionID, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "")
 	if err != nil {
 		t.Fatalf("Service.Chat(first turn) error = %v, want nil", err)
 	}
-	answer, _, err := svc.Chat(context.Background(), "And which items can't be refunded?", sessionID)
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "And which items can't be refunded?", sessionID)
 	if err != nil {
 		t.Fatalf("Service.Chat(follow-up) error = %v, want nil", err)
 	}
@@ -365,21 +528,13 @@ func mustSampleSections(t *testing.T) []Section {
 
 	sections := make([]Section, 0, len(specs))
 	for _, spec := range specs {
-		section, err := NewSection(spec.file, spec.heading, spec.body)
+		section, err := NewSection(spec.file, spec.heading, spec.body, nil, nil)
 		if err != nil {
 			t.Fatalf("NewSection(%q, %q) error = %v, want nil", spec.file, spec.heading, err)
 		}
 		sections = append(sections, section)
 	}
 	return sections
-}
-
-func citationStrings(citations []Citation) []string {
-	out := make([]string, 0, len(citations))
-	for _, citation := range citations {
-		out = append(out, citation.String())
-	}
-	return out
 }
 
 func sameStrings(a, b []string) bool {
@@ -392,4 +547,50 @@ func sameStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestServiceChatLogsEveryQuery pins the query log down because it is write-only
+// in production: nothing reads it back, so if the line stops being emitted —
+// a refactor of record(), a caller added that bypasses it — every downstream
+// consumer just sees an empty file and reads it as "no refusals". Both an
+// answered and a denied query must appear, since the denied ones are the whole
+// point of keeping the log.
+func TestServiceChatLogsEveryQuery(t *testing.T) {
+	core, logs := observer.New(zapcore.InfoLevel)
+	defer zap.ReplaceGlobals(zap.New(core))()
+
+	sections := mustSampleSections(t)
+	svc := NewService(&fakeSectionStore{loadSections: sections}, &fakeLLM{answer: "grounded answer"}, nil, nil, NewInProcStore(), "test-model")
+	if err := svc.LoadOnStartup(context.Background()); err != nil {
+		t.Fatalf("Service.LoadOnStartup() error = %v, want nil", err)
+	}
+
+	if _, _, _, err := svc.ChatWithMetrics(context.Background(), "login", "session"); err != nil {
+		t.Fatalf("Service.Chat() error = %v, want nil", err)
+	}
+	if _, _, _, err := svc.ChatWithMetrics(context.Background(), "zzzz", "session"); err != nil {
+		t.Fatalf("Service.Chat() error = %v, want nil", err)
+	}
+
+	entries := logs.FilterMessage("kb_query").All()
+	if len(entries) != 2 {
+		t.Fatalf("kb_query lines = %d, want 2 (one answered, one denied)", len(entries))
+	}
+	for _, want := range []string{"q", "grounded", "strategy", "sources"} {
+		if _, ok := entries[0].ContextMap()[want]; !ok {
+			t.Errorf("kb_query missing field %q, got %v", want, entries[0].ContextMap())
+		}
+	}
+	if got := entries[1].ContextMap()["grounded"]; got != false {
+		t.Errorf("kb_query grounded = %v for an unmatched query, want false — the log is only useful if refusals are marked", got)
+	}
 }

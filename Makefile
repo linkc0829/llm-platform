@@ -1,4 +1,4 @@
-.PHONY: help build run test test-unit lint fmt vet tidy clean hooks-install verify
+.PHONY: help build run mcp import test test-unit lint fmt vet tidy clean hooks-install verify
 
 # ============================================================================
 # Variables
@@ -19,9 +19,16 @@ help: ## Show this help
 build: ## Build kb binary
 	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/kb
+	go build -o $(BUILD_DIR)/kbmcp ./cmd/kbmcp
 
-run: ## Run kb locally
+run: ## Run kb locally (HTTP API + /mcp endpoint)
 	go run ./cmd/kb
+
+mcp: ## Run the stdio MCP server (dev / Inspector; prefer make run)
+	go run ./cmd/kbmcp
+
+import: ## Import a team bundle: make import TEAM=X FROM=Y
+	go run ./cmd/kbimport -team $(TEAM) -from $(FROM)
 
 # ============================================================================
 # Test

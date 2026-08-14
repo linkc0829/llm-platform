@@ -17,27 +17,27 @@ func NewVectorRepo(indexDir string) *VectorRepo {
 	return &VectorRepo{indexDir: indexDir}
 }
 
-func (r *VectorRepo) Load(ctx context.Context) (map[string][]float32, error) {
+func (r *VectorRepo) Load(ctx context.Context) (string, map[string][]float32, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return "", nil, err
 	}
 
 	b, err := os.ReadFile(r.metadataPath())
 	if errors.Is(err, os.ErrNotExist) {
-		return map[string][]float32{}, nil
+		return "", map[string][]float32{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read vector metadata: %w", err)
+		return "", nil, fmt.Errorf("read vector metadata: %w", err)
 	}
 
 	var in vectorMetaJSON
 	if err := json.Unmarshal(b, &in); err != nil {
-		return nil, fmt.Errorf("unmarshal vector metadata: %w", err)
+		return "", nil, fmt.Errorf("unmarshal vector metadata: %w", err)
 	}
 	if in.Vectors == nil {
-		return map[string][]float32{}, nil
+		return in.Model, map[string][]float32{}, nil
 	}
-	return in.Vectors, nil
+	return in.Model, in.Vectors, nil
 }
 
 func (r *VectorRepo) Save(ctx context.Context, model string, vectors map[string][]float32) error {

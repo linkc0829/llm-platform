@@ -7,7 +7,7 @@ import (
 )
 
 func TestFakeLLMAnswersFromFirstSection(t *testing.T) {
-	section, err := NewSection("refund_policy.md", "Refund Timeline", "Refunds take 5-7 business days.")
+	section, err := NewSection("refund_policy.md", "Refund Timeline", "Refunds take 5-7 business days.", nil, nil)
 	if err != nil {
 		t.Fatalf("NewSection() error = %v, want nil", err)
 	}

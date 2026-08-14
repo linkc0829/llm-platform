@@ -7,20 +7,24 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // service is the local inbound interface the handler depends on.
 // It grows as endpoints are added in later phases.
 type service interface {
 	Index(ctx context.Context) (filesIndexed, sectionsIndexed int, err error)
-	Chat(ctx context.Context, query, sessionID string) (Answer, string, error)
+	ChatWithMetrics(ctx context.Context, query, sessionID string) (Answer, string, RetrievalMetrics, error)
 }
 
 type Handler struct {
-	svc service
+	svc    service
+	logger *zap.Logger
 }
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *Service, logger *zap.Logger) *Handler {
+	return &Handler{svc: svc, logger: logger}
+}
 
 func (h *Handler) health(c *gin.Context) {
 	c.JSON(http.StatusOK, HealthResponse{Status: "ok"})
@@ -50,12 +54,19 @@ func (h *Handler) chat(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
-	answer, sessionID, err := h.svc.Chat(ctx, req.Query, req.SessionID)
+	answer, sessionID, metrics, err := h.svc.ChatWithMetrics(ctx, req.Query, req.SessionID)
 	if err != nil {
+		if h.logger != nil && !errors.Is(err, ErrEmptyQuery) && !errors.Is(err, ErrNotIndexed) {
+			h.logger.Error("chat failed",
+				zap.Error(err),
+				zap.String("query", req.Query),
+				zap.String("request_id", c.GetString("request_id")),
+			)
+		}
 		writeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, toChatResponse(answer, sessionID))
+	c.JSON(http.StatusOK, toChatResponse(answer, sessionID, metrics))
 }
 
 func writeError(c *gin.Context, err error) {

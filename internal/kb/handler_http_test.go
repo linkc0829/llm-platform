@@ -17,6 +17,7 @@ type fakeHandlerService struct {
 	indexErr      error
 	chatAnswer    Answer
 	chatSessionID string
+	chatMetrics   RetrievalMetrics
 	chatErr       error
 	chatQuery     string
 }
@@ -25,9 +26,9 @@ func (f *fakeHandlerService) Index(_ context.Context) (int, int, error) {
 	return f.indexFiles, f.indexSections, f.indexErr
 }
 
-func (f *fakeHandlerService) Chat(_ context.Context, query, _ string) (Answer, string, error) {
+func (f *fakeHandlerService) ChatWithMetrics(_ context.Context, query, _ string) (Answer, string, RetrievalMetrics, error) {
 	f.chatQuery = query
-	return f.chatAnswer, f.chatSessionID, f.chatErr
+	return f.chatAnswer, f.chatSessionID, f.chatMetrics, f.chatErr
 }
 
 func TestHandlerChat(t *testing.T) {
@@ -58,11 +59,11 @@ func TestHandlerChat(t *testing.T) {
 			name: "happy_path_returns_answer_sources_strategy",
 			body: `{"query":"How long do refunds take?","session_id":"s1"}`,
 			svc: &fakeHandlerService{
-				chatAnswer:    NewAnswer("Refunds take 5-7 business days.", []Citation{NewCitation("refund_policy.md", "refund-timeline")}, "markdown"),
+				chatAnswer:    NewAnswer("Refunds take 5-7 business days.", []Citation{NewCitation("refund_policy.md", "refund-timeline")}, "markdown", []string{"../screenshots/refund.png"}, true),
 				chatSessionID: "s1",
 			},
 			wantStatus: http.StatusOK,
-			wantBody:   `"sources":["refund_policy.md#refund-timeline"]`,
+			wantBody:   `"grounded":true,"sources":["refund_policy.md#refund-timeline"]`,
 		},
 	}
 

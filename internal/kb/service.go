@@ -4,19 +4,46 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 const (
-	// Thresholds are empirical for the sample docs; see the QRSPI plan calibration note.
-	strongThreshold = 1.7
-	minThreshold    = 1.2
-	topK            = 3
-	embeddingModel  = "text-embedding-3-small"
+	// Thresholds are empirical for the sample docs. Whether either one can
+	// discriminate depends on the corpus, so re-measure after it changes:
+	//
+	// 2026-07-21, 34 questions, sections a median 34 characters long:
+	//   bm25Max     hit 7.86   vs miss 11.58   (misses score higher)
+	//   bestCosine  hit 0.622  vs miss 0.639   (indistinguishable)
+	//
+	// 2026-07-22, 29 questions, same source re-exported with static UIA text
+	// captured and control sections given full-sentence Chinese lead-ins
+	// (216 sections): bm25Max hit 11.74 vs miss 13.57, bestCosine 0.665 vs 0.638.
+	//
+	// So cosineMin is a meaningful knob and minThreshold is not: 34 characters
+	// gave the embedding almost nothing to encode, and the earlier "vectors add
+	// nothing" reading was a property of the thin corpus, not of the approach.
+	// bm25Max has never separated hits from misses under any corpus measured.
+	//
+	// The cosine margin depends on the corpus (it shrank when screens were split
+	// into smaller chunks, grew back when bodies gained Chinese context), so
+	// treat it as a property of the current data, not a constant — re-measure.
+	minThreshold = 1.2
+	// Measured, not guessed. A module overview holds one section per screen, so a
+	// button-location question needs the section for that specific screen — and the
+	// section-level probe over 22 refusals found it at rank 3 for only 3 of them:
+	// top-3=3, top-5=17, top-8=20, top-10=22, absent from the 20 candidates=0.
+	// At 3 the answer was in the candidate set every time and cut before the model
+	// saw it, which reads as the model refusing when it is retrieval trimming.
+	// Re-measure with `-tags retrievalprobe` after any chunking change.
+	topK       = 8
+	candidateK = 20
+	rrfK       = 60
+	cosineMin  = 0.30
 )
 
 type sectionStore interface {
@@ -26,11 +53,12 @@ type sectionStore interface {
 }
 
 type Service struct {
-	sections sectionStore
-	llm      LLM
-	embedder Embedder
-	vectors  VectorStore
-	sessions SessionStore
+	sections   sectionStore
+	llm        LLM
+	embedder   Embedder
+	vectors    VectorStore
+	sessions   SessionStore
+	embedModel string
 
 	mu      sync.RWMutex
 	vecMap  map[string][]float32
@@ -39,8 +67,13 @@ type Service struct {
 	ready   bool
 }
 
-func NewService(sections sectionStore, llm LLM, embedder Embedder, vectors VectorStore, sessions SessionStore) *Service {
-	return &Service{sections: sections, llm: llm, embedder: embedder, vectors: vectors, sessions: sessions}
+type RetrievalMetrics struct {
+	BM25Max    float64
+	BestCosine float64
+}
+
+func NewService(sections sectionStore, llm LLM, embedder Embedder, vectors VectorStore, sessions SessionStore, embedModel string) *Service {
+	return &Service{sections: sections, llm: llm, embedder: embedder, vectors: vectors, sessions: sessions, embedModel: embedModel}
 }
 
 func (s *Service) Index(ctx context.Context) (int, int, error) {
@@ -63,28 +96,42 @@ func (s *Service) Index(ctx context.Context) (int, int, error) {
 
 func (s *Service) LoadOnStartup(ctx context.Context) error {
 	secs, err := s.sections.Load(ctx)
-	if errors.Is(err, ErrNotIndexed) {
-		return ErrNotIndexed
+	if errors.Is(err, ErrNotIndexed) || errors.Is(err, ErrIndexStale) {
+		return err
 	}
 	if err != nil {
 		return fmt.Errorf("load index: %w", err)
 	}
 
 	vecMap := map[string][]float32{}
+	stale := false
 	if s.vectors != nil {
-		vecMap, err = s.vectors.Load(ctx)
+		model, loaded, err := s.vectors.Load(ctx)
 		if err != nil {
 			return fmt.Errorf("load vectors: %w", err)
+		}
+		if len(loaded) > 0 && model != s.embedModel {
+			stale = true
+		} else {
+			vecMap = loaded
 		}
 	}
 
 	s.storeIndexSnapshot(secs, BuildCorpus(secs), vecMap, true)
+	if stale {
+		return ErrVectorsIgnored
+	}
 	return nil
 }
 
-func (s *Service) Chat(ctx context.Context, query, sessionID string) (Answer, string, error) {
+func (s *Service) ChatWithMetrics(ctx context.Context, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
+	return s.chat(ctx, query, sessionID)
+}
+
+func (s *Service) chat(ctx context.Context, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
+	start := time.Now()
 	if strings.TrimSpace(query) == "" {
-		return Answer{}, sessionID, ErrEmptyQuery
+		return Answer{}, sessionID, RetrievalMetrics{}, ErrEmptyQuery
 	}
 	if sessionID == "" {
 		sessionID = uuid.NewString()
@@ -92,50 +139,78 @@ func (s *Service) Chat(ctx context.Context, query, sessionID string) (Answer, st
 
 	indexed, corpus, vecMap, ready := s.indexSnapshot()
 	if !ready {
-		return Answer{}, sessionID, ErrNotIndexed
+		return Answer{}, sessionID, RetrievalMetrics{}, ErrNotIndexed
 	}
 
 	history := s.history(ctx, sessionID)
 	contextualQuery := composeQuery(history, query)
-	ranked := corpus.RankBM25(tokenize(contextualQuery))
-	if len(ranked) == 0 || ranked[0].Score < minThreshold {
-		return s.deny(ctx, sessionID, query)
+	bm25List := corpus.RankBM25(tokenize(contextualQuery))
+	for len(bm25List) > 0 && bm25List[len(bm25List)-1].Score <= 0 {
+		bm25List = bm25List[:len(bm25List)-1]
 	}
-
-	if ranked[0].Score >= strongThreshold || len(vecMap) == 0 || s.embedder == nil {
-		return s.answerFrom(ctx, sessionID, query, topSections(indexed, ranked, topK), history, "markdown")
+	if len(bm25List) > candidateK {
+		bm25List = bm25List[:candidateK]
 	}
-
-	queryVectors, err := s.embedder.Embed(ctx, []string{contextualQuery})
-	if err != nil {
-		return Answer{}, sessionID, fmt.Errorf("embed query: %w", err)
+	bm25Max := 0.0
+	if len(bm25List) > 0 {
+		bm25Max = bm25List[0].Score
 	}
-	if len(queryVectors) == 0 {
-		return s.deny(ctx, sessionID, query)
+	var vecList []ScoredSection
+	if s.embedder != nil && len(vecMap) > 0 {
+		if vectors, err := s.embedder.Embed(ctx, []string{contextualQuery}); err == nil && len(vectors) > 0 {
+			vecList = RankVector(indexed, vecMap, vectors[0], candidateK)
+		}
 	}
-
-	sections := topByCosine(indexed, vecMap, queryVectors[0], topK)
+	bestCosine := 0.0
+	if len(vecList) > 0 {
+		bestCosine = vecList[0].Score
+	}
+	if bm25Max < minThreshold && bestCosine < cosineMin {
+		answer, sessionID, err := s.deny(ctx, sessionID, query, start)
+		return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
+	}
+	ranked, strategy := bm25List, "markdown"
+	if len(vecList) > 0 && len(bm25List) > 0 {
+		ranked, strategy = FuseRRF([][]ScoredSection{bm25List, vecList}, rrfK), "hybrid"
+	} else if len(vecList) > 0 {
+		ranked, strategy = vecList, "vector"
+	}
+	sections := topSections(indexed, ranked, topK)
 	if len(sections) == 0 {
-		return s.deny(ctx, sessionID, query)
+		answer, sessionID, err := s.deny(ctx, sessionID, query, start)
+		return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
 	}
-	return s.answerFrom(ctx, sessionID, query, sections, history, "vector")
+	answer, sessionID, err := s.answerFrom(ctx, sessionID, query, sections, history, strategy, start)
+	return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
 }
 
 // deny records the turn and returns the cannot-confirm answer.
-func (s *Service) deny(ctx context.Context, sessionID, query string) (Answer, string, error) {
+func (s *Service) deny(ctx context.Context, sessionID, query string, start time.Time) (Answer, string, error) {
 	answer := s.cannotConfirm()
-	s.appendTurn(ctx, sessionID, query, answer)
+	s.record(ctx, sessionID, query, answer, start)
 	return answer, sessionID, nil
 }
 
 // answerFrom grounds the LLM on the given sections, records the turn, and returns the answer.
-func (s *Service) answerFrom(ctx context.Context, sessionID, query string, sections []Section, history []Turn, strategy string) (Answer, string, error) {
+func (s *Service) answerFrom(ctx context.Context, sessionID, query string, sections []Section, history []Turn, strategy string, start time.Time) (Answer, string, error) {
 	text, err := s.llm.Answer(ctx, query, sections, history)
 	if err != nil {
 		return Answer{}, sessionID, fmt.Errorf("llm answer: %w", err)
 	}
-	answer := NewAnswer(text, citationsFor(sections), strategy)
-	s.appendTurn(ctx, sessionID, query, answer)
+	// The model leads a refusal with ungroundedSentinel even when we retrieved
+	// context (unrelated match, or ui_inventory only for a steps question). Strip
+	// it and report grounded=false, so retrieval succeeding != answer grounded.
+	text, ungrounded := splitUngrounded(text)
+	// A refusal carries no usable sources. deny() already returns none, so
+	// dropping them here makes "grounded == false implies no citations" hold on
+	// both paths — otherwise a refusal comes back decorated with citations that
+	// support nothing, which is the more misleading half of a missed sentinel.
+	sources, images := citationsFor(sections), imagesOf(sections)
+	if ungrounded {
+		sources, images = nil, nil
+	}
+	answer := NewAnswer(text, sources, strategy, images, !ungrounded)
+	s.record(ctx, sessionID, query, answer, start)
 	return answer, sessionID, nil
 }
 
@@ -156,7 +231,7 @@ func (s *Service) embedSections(ctx context.Context, secs []Section) (map[string
 	for i, sec := range secs {
 		vecMap[sec.Citation()] = embs[i]
 	}
-	if err := s.vectors.Save(ctx, embeddingModel, vecMap); err != nil {
+	if err := s.vectors.Save(ctx, s.embedModel, vecMap); err != nil {
 		return nil, fmt.Errorf("save vectors: %w", err)
 	}
 	return vecMap, nil
@@ -193,26 +268,8 @@ func topSections(indexed []Section, ranked []ScoredSection, k int) []Section {
 	return sections
 }
 
-func topByCosine(indexed []Section, vecMap map[string][]float32, queryVec []float32, k int) []Section {
-	ranked := make([]ScoredSection, 0, len(indexed))
-	for i, section := range indexed {
-		score := Cosine(queryVec, vecMap[section.Citation()])
-		if score <= 0 {
-			continue
-		}
-		ranked = append(ranked, ScoredSection{Index: i, Score: score})
-	}
-	sort.Slice(ranked, func(i, j int) bool {
-		if ranked[i].Score == ranked[j].Score {
-			return ranked[i].Index < ranked[j].Index
-		}
-		return ranked[i].Score > ranked[j].Score
-	})
-	return topSections(indexed, ranked, k)
-}
-
 func (s *Service) cannotConfirm() Answer {
-	return NewAnswer("I cannot confirm that from the knowledge base.", nil, "")
+	return NewAnswer("I cannot confirm that from the knowledge base.", nil, "", nil, false)
 }
 
 func (s *Service) history(ctx context.Context, sessionID string) []Turn {
@@ -222,11 +279,37 @@ func (s *Service) history(ctx context.Context, sessionID string) []Turn {
 	return s.sessions.Get(ctx, sessionID)
 }
 
-func (s *Service) appendTurn(ctx context.Context, sessionID, query string, answer Answer) {
+// record logs the answered query, then appends the turn to session history.
+//
+// The log line is the only durable trace of what the KB was actually asked:
+// session history is an in-process ring that dies with the process. Filtering
+// it for grounded=false yields the questions the corpus could not answer, in
+// real frequency order — the input to the next gate or re-export, which is
+// otherwise only reachable by authoring eval questions and guessing.
+//
+// It sits before the nil-sessions guard on purpose: a caller with no session
+// store still asked something worth recording.
+func (s *Service) record(ctx context.Context, sessionID, query string, answer Answer, start time.Time) {
+	zap.L().Info("kb_query",
+		zap.String("q", query),
+		zap.String("session", sessionID),
+		zap.Duration("took", time.Since(start)),
+		zap.Bool("grounded", answer.Grounded()),
+		zap.String("strategy", answer.Strategy()),
+		zap.Strings("sources", citationStrings(answer.Sources())),
+	)
 	if s.sessions == nil {
 		return
 	}
 	s.sessions.Append(ctx, sessionID, Turn{Query: query, Answer: answer.Text()})
+}
+
+func citationStrings(cites []Citation) []string {
+	out := make([]string, 0, len(cites))
+	for _, c := range cites {
+		out = append(out, c.String())
+	}
+	return out
 }
 
 func composeQuery(history []Turn, query string) string {
@@ -248,6 +331,23 @@ func bodiesOf(sections []Section) []string {
 		bodies = append(bodies, section.Body())
 	}
 	return bodies
+}
+
+// imagesOf collects the screenshot paths of the cited sections, deduplicated and
+// in citation order, so an answer can point at the screen it describes.
+func imagesOf(sections []Section) []string {
+	images := make([]string, 0, len(sections))
+	seen := map[string]bool{}
+	for _, section := range sections {
+		for _, image := range section.Images() {
+			if seen[image] {
+				continue
+			}
+			seen[image] = true
+			images = append(images, image)
+		}
+	}
+	return images
 }
 
 func citationsFor(sections []Section) []Citation {
