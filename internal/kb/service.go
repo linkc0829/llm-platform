@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 const (
@@ -38,10 +40,10 @@ const (
 	// At 3 the answer was in the candidate set every time and cut before the model
 	// saw it, which reads as the model refusing when it is retrieval trimming.
 	// Re-measure with `-tags retrievalprobe` after any chunking change.
-	topK         = 8
-	candidateK   = 20
-	rrfK         = 60
-	cosineMin    = 0.30
+	topK       = 8
+	candidateK = 20
+	rrfK       = 60
+	cosineMin  = 0.30
 )
 
 type sectionStore interface {
@@ -127,6 +129,7 @@ func (s *Service) ChatWithMetrics(ctx context.Context, query, sessionID string) 
 }
 
 func (s *Service) chat(ctx context.Context, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
+	start := time.Now()
 	if strings.TrimSpace(query) == "" {
 		return Answer{}, sessionID, RetrievalMetrics{}, ErrEmptyQuery
 	}
@@ -163,7 +166,7 @@ func (s *Service) chat(ctx context.Context, query, sessionID string) (Answer, st
 		bestCosine = vecList[0].Score
 	}
 	if bm25Max < minThreshold && bestCosine < cosineMin {
-		answer, sessionID, err := s.deny(ctx, sessionID, query)
+		answer, sessionID, err := s.deny(ctx, sessionID, query, start)
 		return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
 	}
 	ranked, strategy := bm25List, "markdown"
@@ -174,22 +177,22 @@ func (s *Service) chat(ctx context.Context, query, sessionID string) (Answer, st
 	}
 	sections := topSections(indexed, ranked, topK)
 	if len(sections) == 0 {
-		answer, sessionID, err := s.deny(ctx, sessionID, query)
+		answer, sessionID, err := s.deny(ctx, sessionID, query, start)
 		return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
 	}
-	answer, sessionID, err := s.answerFrom(ctx, sessionID, query, sections, history, strategy)
+	answer, sessionID, err := s.answerFrom(ctx, sessionID, query, sections, history, strategy, start)
 	return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
 }
 
 // deny records the turn and returns the cannot-confirm answer.
-func (s *Service) deny(ctx context.Context, sessionID, query string) (Answer, string, error) {
+func (s *Service) deny(ctx context.Context, sessionID, query string, start time.Time) (Answer, string, error) {
 	answer := s.cannotConfirm()
-	s.appendTurn(ctx, sessionID, query, answer)
+	s.record(ctx, sessionID, query, answer, start)
 	return answer, sessionID, nil
 }
 
 // answerFrom grounds the LLM on the given sections, records the turn, and returns the answer.
-func (s *Service) answerFrom(ctx context.Context, sessionID, query string, sections []Section, history []Turn, strategy string) (Answer, string, error) {
+func (s *Service) answerFrom(ctx context.Context, sessionID, query string, sections []Section, history []Turn, strategy string, start time.Time) (Answer, string, error) {
 	text, err := s.llm.Answer(ctx, query, sections, history)
 	if err != nil {
 		return Answer{}, sessionID, fmt.Errorf("llm answer: %w", err)
@@ -207,7 +210,7 @@ func (s *Service) answerFrom(ctx context.Context, sessionID, query string, secti
 		sources, images = nil, nil
 	}
 	answer := NewAnswer(text, sources, strategy, images, !ungrounded)
-	s.appendTurn(ctx, sessionID, query, answer)
+	s.record(ctx, sessionID, query, answer, start)
 	return answer, sessionID, nil
 }
 
@@ -276,11 +279,37 @@ func (s *Service) history(ctx context.Context, sessionID string) []Turn {
 	return s.sessions.Get(ctx, sessionID)
 }
 
-func (s *Service) appendTurn(ctx context.Context, sessionID, query string, answer Answer) {
+// record logs the answered query, then appends the turn to session history.
+//
+// The log line is the only durable trace of what the KB was actually asked:
+// session history is an in-process ring that dies with the process. Filtering
+// it for grounded=false yields the questions the corpus could not answer, in
+// real frequency order — the input to the next gate or re-export, which is
+// otherwise only reachable by authoring eval questions and guessing.
+//
+// It sits before the nil-sessions guard on purpose: a caller with no session
+// store still asked something worth recording.
+func (s *Service) record(ctx context.Context, sessionID, query string, answer Answer, start time.Time) {
+	zap.L().Info("kb_query",
+		zap.String("q", query),
+		zap.String("session", sessionID),
+		zap.Duration("took", time.Since(start)),
+		zap.Bool("grounded", answer.Grounded()),
+		zap.String("strategy", answer.Strategy()),
+		zap.Strings("sources", citationStrings(answer.Sources())),
+	)
 	if s.sessions == nil {
 		return
 	}
 	s.sessions.Append(ctx, sessionID, Turn{Query: query, Answer: answer.Text()})
+}
+
+func citationStrings(cites []Citation) []string {
+	out := make([]string, 0, len(cites))
+	for _, c := range cites {
+		out = append(out, c.String())
+	}
+	return out
 }
 
 func composeQuery(history []Turn, query string) string {

@@ -43,5 +43,5 @@ docs/
 eval/
 run_eval.py
 eval_out.json
-.claude
-.agents
+.claude/
+.agents/

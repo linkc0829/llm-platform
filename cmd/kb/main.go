@@ -11,6 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"go.uber.org/zap"
+
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/bootstrap"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/mcpserver"
@@ -29,6 +31,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("logger: %v", err)
 	}
+
+	// The service logs each answered query through zap's global. Without this it
+	// keeps the no-op default and the query log is silently empty.
+	zap.ReplaceGlobals(lg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
