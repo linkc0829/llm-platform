@@ -25,7 +25,9 @@ import urllib.request
 
 # ===== 設定 =====
 KB_URL = "http://localhost:12598/chat"     # 對齊 .env 的 APP_PORT
-EVAL_DIR = r"<<EVAL_DIR>>"        # 含 <area>/*-eval.yaml 的目錄(make import 產出)
+# 含 <area>/*-eval.yaml 的目錄(make import 產出)。KB_EVAL_DIR 可覆蓋,
+# 這樣重跑驗收不必去改這份受版控的樣板。
+EVAL_DIR = os.getenv("KB_EVAL_DIR", r"<<EVAL_DIR>>")
 # 上一批全軍覆沒的自然語句 + 一題必須婉拒的無關問題,作為固定回歸集
 NATURAL_QS = ["如何結帳?", "如何作廢訂單?", "如何重印發票?", "怎麼看營業報表?",
               "如何暫存訂單?", "今天台北天氣如何?"]
@@ -75,9 +77,19 @@ def wait_for_request_slot():
     if delay > 0:
         time.sleep(delay)
 
+def _headers():
+    """/chat 現在要 bearer token。沒設 KB_EVAL_TOKEN 就不帶 header——服務若開著
+    auth 會整批回 401,那是正確的訊號,不要用「auth 關掉再跑」把它蓋掉:那條路
+    測到的不是使用者實際會走的路徑。"""
+    headers = {"Content-Type": "application/json"}
+    token = os.getenv("KB_EVAL_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    return headers
+
 def ask(q):
     body = json.dumps({"query": q}).encode()
-    req = urllib.request.Request(KB_URL, body, {"Content-Type": "application/json"})
+    req = urllib.request.Request(KB_URL, body, _headers())
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             wait_for_request_slot()
