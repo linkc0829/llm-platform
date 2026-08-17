@@ -1,0 +1,8 @@
+# core.autocrlf=true hands Windows checkouts CRLF, but gofmt only ever writes
+# LF. Files git checked out then disagree with files an editor wrote directly,
+# so `gofmt -l` reports a file whose committed bytes are already correct — a
+# lint failure with nothing to fix and no possible commit.
+#
+# text=auto still detects binaries and leaves them alone, so this one line
+# covers every text file without listing extensions.
+* text=auto eol=lf
