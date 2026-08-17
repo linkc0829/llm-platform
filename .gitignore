@@ -15,6 +15,10 @@ coverage.html
 .env.local
 .env.openai
 
+# Local bearer-token store
+/auth.json
+/auth.json.lock
+
 # Generated knowledge-base index (rebuilt by POST /index; holds a full copy of docs/)
 .kb/
 log/

@@ -163,7 +163,9 @@ func TestRetrievalProbe(t *testing.T) {
 		}
 		var vecList []ScoredSection
 		if vectors, err := oai.Embed(ctx, []string{tc.Query}); err == nil && len(vectors) > 0 {
-			vecList = RankVector(indexed, vecMap, vectors[0], candidateK)
+			vecList = RankVector(indexed, vecMap, vectors[0], candidateK, func(section Section) bool {
+				return CanSee(FullAccessPrincipal(AnonymousOwner), section)
+			})
 		} else if err != nil {
 			t.Fatalf("Embed(%q) error = %v — is the embedder reachable?", tc.Query, err)
 		}
@@ -317,7 +319,9 @@ func runEvalRetrievalProbe(t *testing.T, ctx context.Context, oai *OpenAIClient,
 		if len(bm25List) > candidateK {
 			bm25List = bm25List[:candidateK]
 		}
-		vecList := RankVector(indexed, vecMap, vectors[i], candidateK)
+		vecList := RankVector(indexed, vecMap, vectors[i], candidateK, func(section Section) bool {
+			return CanSee(FullAccessPrincipal(AnonymousOwner), section)
+		})
 		ranked := bm25List
 		if len(vecList) > 0 && len(bm25List) > 0 {
 			ranked = FuseRRF([][]ScoredSection{bm25List, vecList}, rrfK)

@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/shared"
 )
 
 const (
@@ -81,6 +83,9 @@ func (s *Service) Index(ctx context.Context) (int, int, error) {
 	if err != nil {
 		return 0, 0, fmt.Errorf("parse docs: %w", err)
 	}
+	if err := AuditSections(secs); err != nil {
+		return 0, 0, fmt.Errorf("audit sections: %w", err)
+	}
 	if err := s.sections.Save(ctx, secs); err != nil {
 		return 0, 0, fmt.Errorf("save index: %w", err)
 	}
@@ -101,6 +106,9 @@ func (s *Service) LoadOnStartup(ctx context.Context) error {
 	}
 	if err != nil {
 		return fmt.Errorf("load index: %w", err)
+	}
+	if err := AuditSections(secs); err != nil {
+		return fmt.Errorf("%w: %w", ErrIndexAccessAuditFailed, err)
 	}
 
 	vecMap := map[string][]float32{}
@@ -124,12 +132,16 @@ func (s *Service) LoadOnStartup(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) ChatWithMetrics(ctx context.Context, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
-	return s.chat(ctx, query, sessionID)
+func (s *Service) ChatWithMetrics(ctx context.Context, principal shared.Principal, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
+	return s.chat(ctx, principal, query, sessionID)
 }
 
-func (s *Service) chat(ctx context.Context, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
+func (s *Service) chat(ctx context.Context, principal shared.Principal, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
 	start := time.Now()
+	ownerID := principal.ID
+	if ownerID == "" {
+		return Answer{}, sessionID, RetrievalMetrics{}, ErrSessionOwnerRequired
+	}
 	if strings.TrimSpace(query) == "" {
 		return Answer{}, sessionID, RetrievalMetrics{}, ErrEmptyQuery
 	}
@@ -137,14 +149,22 @@ func (s *Service) chat(ctx context.Context, query, sessionID string) (Answer, st
 		sessionID = uuid.NewString()
 	}
 
+	history, err := s.history(ctx, sessionID, ownerID)
+	if err != nil {
+		return Answer{}, sessionID, RetrievalMetrics{}, fmt.Errorf("claim session: %w", err)
+	}
+
 	indexed, corpus, vecMap, ready := s.indexSnapshot()
 	if !ready {
 		return Answer{}, sessionID, RetrievalMetrics{}, ErrNotIndexed
 	}
 
-	history := s.history(ctx, sessionID)
 	contextualQuery := composeQuery(history, query)
+	allow := func(section Section) bool {
+		return CanSee(principal, section)
+	}
 	bm25List := corpus.RankBM25(tokenize(contextualQuery))
+	bm25List = filterRankedSections(indexed, bm25List, allow)
 	for len(bm25List) > 0 && bm25List[len(bm25List)-1].Score <= 0 {
 		bm25List = bm25List[:len(bm25List)-1]
 	}
@@ -158,7 +178,7 @@ func (s *Service) chat(ctx context.Context, query, sessionID string) (Answer, st
 	var vecList []ScoredSection
 	if s.embedder != nil && len(vecMap) > 0 {
 		if vectors, err := s.embedder.Embed(ctx, []string{contextualQuery}); err == nil && len(vectors) > 0 {
-			vecList = RankVector(indexed, vecMap, vectors[0], candidateK)
+			vecList = RankVector(indexed, vecMap, vectors[0], candidateK, allow)
 		}
 	}
 	bestCosine := 0.0
@@ -166,7 +186,7 @@ func (s *Service) chat(ctx context.Context, query, sessionID string) (Answer, st
 		bestCosine = vecList[0].Score
 	}
 	if bm25Max < minThreshold && bestCosine < cosineMin {
-		answer, sessionID, err := s.deny(ctx, sessionID, query, start)
+		answer, sessionID, err := s.deny(ctx, ownerID, sessionID, query, start)
 		return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
 	}
 	ranked, strategy := bm25List, "markdown"
@@ -177,22 +197,24 @@ func (s *Service) chat(ctx context.Context, query, sessionID string) (Answer, st
 	}
 	sections := topSections(indexed, ranked, topK)
 	if len(sections) == 0 {
-		answer, sessionID, err := s.deny(ctx, sessionID, query, start)
+		answer, sessionID, err := s.deny(ctx, ownerID, sessionID, query, start)
 		return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
 	}
-	answer, sessionID, err := s.answerFrom(ctx, sessionID, query, sections, history, strategy, start)
+	answer, sessionID, err := s.answerFrom(ctx, ownerID, sessionID, query, sections, history, strategy, start)
 	return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
 }
 
 // deny records the turn and returns the cannot-confirm answer.
-func (s *Service) deny(ctx context.Context, sessionID, query string, start time.Time) (Answer, string, error) {
+func (s *Service) deny(ctx context.Context, ownerID, sessionID, query string, start time.Time) (Answer, string, error) {
 	answer := s.cannotConfirm()
-	s.record(ctx, sessionID, query, answer, start)
+	if err := s.record(ctx, ownerID, sessionID, query, answer, start); err != nil {
+		return Answer{}, sessionID, fmt.Errorf("record denied answer: %w", err)
+	}
 	return answer, sessionID, nil
 }
 
 // answerFrom grounds the LLM on the given sections, records the turn, and returns the answer.
-func (s *Service) answerFrom(ctx context.Context, sessionID, query string, sections []Section, history []Turn, strategy string, start time.Time) (Answer, string, error) {
+func (s *Service) answerFrom(ctx context.Context, ownerID, sessionID, query string, sections []Section, history []Turn, strategy string, start time.Time) (Answer, string, error) {
 	text, err := s.llm.Answer(ctx, query, sections, history)
 	if err != nil {
 		return Answer{}, sessionID, fmt.Errorf("llm answer: %w", err)
@@ -210,7 +232,9 @@ func (s *Service) answerFrom(ctx context.Context, sessionID, query string, secti
 		sources, images = nil, nil
 	}
 	answer := NewAnswer(text, sources, strategy, images, !ungrounded)
-	s.record(ctx, sessionID, query, answer, start)
+	if err := s.record(ctx, ownerID, sessionID, query, answer, start); err != nil {
+		return Answer{}, sessionID, fmt.Errorf("record answer: %w", err)
+	}
 	return answer, sessionID, nil
 }
 
@@ -252,6 +276,20 @@ func (s *Service) indexSnapshot() ([]Section, Corpus, map[string][]float32, bool
 	return s.indexed, s.corpus, s.vecMap, s.ready
 }
 
+func filterRankedSections(indexed []Section, ranked []ScoredSection, allow func(Section) bool) []ScoredSection {
+	filtered := make([]ScoredSection, 0, len(ranked))
+	for _, scored := range ranked {
+		if scored.Index < 0 || scored.Index >= len(indexed) {
+			continue
+		}
+		if allow != nil && !allow(indexed[scored.Index]) {
+			continue
+		}
+		filtered = append(filtered, scored)
+	}
+	return filtered
+}
+
 func topSections(indexed []Section, ranked []ScoredSection, k int) []Section {
 	if k > len(ranked) {
 		k = len(ranked)
@@ -272,11 +310,11 @@ func (s *Service) cannotConfirm() Answer {
 	return NewAnswer("I cannot confirm that from the knowledge base.", nil, "", nil, false)
 }
 
-func (s *Service) history(ctx context.Context, sessionID string) []Turn {
+func (s *Service) history(ctx context.Context, sessionID, ownerID string) ([]Turn, error) {
 	if s.sessions == nil {
-		return nil
+		return nil, nil
 	}
-	return s.sessions.Get(ctx, sessionID)
+	return s.sessions.Claim(ctx, sessionID, ownerID)
 }
 
 // record logs the answered query, then appends the turn to session history.
@@ -289,9 +327,10 @@ func (s *Service) history(ctx context.Context, sessionID string) []Turn {
 //
 // It sits before the nil-sessions guard on purpose: a caller with no session
 // store still asked something worth recording.
-func (s *Service) record(ctx context.Context, sessionID, query string, answer Answer, start time.Time) {
+func (s *Service) record(ctx context.Context, ownerID, sessionID, query string, answer Answer, start time.Time) error {
 	zap.L().Info("kb_query",
 		zap.String("q", query),
+		zap.String("owner_id", ownerID),
 		zap.String("session", sessionID),
 		zap.Duration("took", time.Since(start)),
 		zap.Bool("grounded", answer.Grounded()),
@@ -299,9 +338,12 @@ func (s *Service) record(ctx context.Context, sessionID, query string, answer An
 		zap.Strings("sources", citationStrings(answer.Sources())),
 	)
 	if s.sessions == nil {
-		return
+		return nil
 	}
-	s.sessions.Append(ctx, sessionID, Turn{Query: query, Answer: answer.Text()})
+	if err := s.sessions.Append(ctx, sessionID, ownerID, Turn{Query: query, Answer: answer.Text()}); err != nil {
+		return fmt.Errorf("append session: %w", err)
+	}
+	return nil
 }
 
 func citationStrings(cites []Citation) []string {

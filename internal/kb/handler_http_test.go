@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/shared"
 )
 
 type fakeHandlerService struct {
@@ -20,14 +22,16 @@ type fakeHandlerService struct {
 	chatMetrics   RetrievalMetrics
 	chatErr       error
 	chatQuery     string
+	chatOwnerID   string
 }
 
 func (f *fakeHandlerService) Index(_ context.Context) (int, int, error) {
 	return f.indexFiles, f.indexSections, f.indexErr
 }
 
-func (f *fakeHandlerService) ChatWithMetrics(_ context.Context, query, _ string) (Answer, string, RetrievalMetrics, error) {
+func (f *fakeHandlerService) ChatWithMetrics(_ context.Context, principal shared.Principal, query, _ string) (Answer, string, RetrievalMetrics, error) {
 	f.chatQuery = query
+	f.chatOwnerID = principal.ID
 	return f.chatAnswer, f.chatSessionID, f.chatMetrics, f.chatErr
 }
 
@@ -70,7 +74,7 @@ func TestHandlerChat(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := gin.New()
-			RegisterRoutes(r.Group(""), &Handler{svc: tt.svc})
+			RegisterRoutes(r.Group(""), &Handler{svc: tt.svc, principal: AnonymousPrincipal}, RouteGuards{AllowUnauthenticated: true})
 
 			req := httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
@@ -92,7 +96,7 @@ func TestHandlerIndexUsesService(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &fakeHandlerService{indexFiles: 3, indexSections: 10}
 	r := gin.New()
-	RegisterRoutes(r.Group(""), &Handler{svc: svc})
+	RegisterRoutes(r.Group(""), &Handler{svc: svc, principal: AnonymousPrincipal}, RouteGuards{AllowUnauthenticated: true})
 
 	req := httptest.NewRequest(http.MethodPost, "/index", nil)
 	w := httptest.NewRecorder()
@@ -115,5 +119,17 @@ func TestWriteErrorUsesErrorSemantics(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("writeError(ErrEmptyQuery) status = %d body = %s, want 400", w.Code, w.Body.String())
+	}
+}
+
+func TestWriteErrorMapsSessionOwnerMismatchToForbidden(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	writeError(c, errors.Join(errors.New("wrapped"), ErrSessionOwnerMismatch))
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("writeError(ErrSessionOwnerMismatch) status = %d body = %s, want 403", w.Code, w.Body.String())
 	}
 }

@@ -46,7 +46,7 @@ func main() {
 	svc := bootstrap.NewKBService(cfg)
 	if err := svc.LoadOnStartup(context.Background()); err != nil {
 		switch {
-		case errors.Is(err, kb.ErrNotIndexed), errors.Is(err, kb.ErrIndexStale), errors.Is(err, kb.ErrVectorsIgnored):
+		case errors.Is(err, kb.ErrNotIndexed), errors.Is(err, kb.ErrIndexStale), errors.Is(err, kb.ErrIndexAccessAuditFailed), errors.Is(err, kb.ErrVectorsIgnored):
 			fmt.Fprintln(os.Stderr, "knowledge base:", err)
 		default:
 			fatal(fmt.Errorf("load index: %w", err))
@@ -55,6 +55,8 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	// stdio has no network trust boundary: anyone who can launch this process
+	// can already read the local corpus, so it intentionally has full access.
 	if err := mcpserver.New(svc, lg).Run(ctx, &mcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
 		fatal(fmt.Errorf("run MCP server: %w", err))
 	}

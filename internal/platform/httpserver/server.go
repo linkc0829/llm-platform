@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,7 +21,8 @@ type Server struct {
 }
 
 type Config struct {
-	Port int
+	Port        int
+	BindAddress string
 }
 
 // New constructs a gin Engine with default middleware (recovery, request id,
@@ -37,9 +40,13 @@ func New(logger *zap.Logger) *gin.Engine {
 
 // Wrap wraps a gin engine in a Server with graceful shutdown.
 func Wrap(engine *gin.Engine, cfg Config, logger *zap.Logger) *Server {
+	addr := fmt.Sprintf(":%d", cfg.Port)
+	if cfg.BindAddress != "" {
+		addr = net.JoinHostPort(cfg.BindAddress, strconv.Itoa(cfg.Port))
+	}
 	return &Server{
 		srv: &http.Server{
-			Addr:              fmt.Sprintf(":%d", cfg.Port),
+			Addr:              addr,
 			Handler:           engine,
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       30 * time.Second,

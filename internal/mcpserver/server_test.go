@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
+	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.uber.org/zap"
 
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
+	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/shared"
 )
 
 type fakeSearcher struct {
@@ -20,15 +23,40 @@ type fakeSearcher struct {
 	errForEmpty bool
 	query       string
 	session     string
+	ownerID     string
 }
 
-func (f *fakeSearcher) ChatWithMetrics(_ context.Context, query, sessionID string) (kb.Answer, string, kb.RetrievalMetrics, error) {
+func (f *fakeSearcher) ChatWithMetrics(_ context.Context, principal shared.Principal, query, sessionID string) (kb.Answer, string, kb.RetrievalMetrics, error) {
 	f.query = query
 	f.session = sessionID
+	f.ownerID = principal.ID
 	if f.errForEmpty && query == "" {
 		return kb.Answer{}, "", kb.RetrievalMetrics{}, kb.ErrEmptyQuery
 	}
 	return f.answer, f.sessionID, kb.RetrievalMetrics{}, f.err
+}
+
+func TestPrincipalFromRequestUsesNamedExtra(t *testing.T) {
+	named := shared.Principal{ID: "named", Engineering: true}
+	request := &mcp.CallToolRequest{Extra: &mcp.RequestExtra{TokenInfo: &sdkauth.TokenInfo{
+		UserID: "token-user",
+		Extra: map[string]any{
+			"other":     shared.Principal{ID: "other", Engineering: false},
+			"principal": named,
+		},
+	}}}
+
+	got := principalFromRequest(request, shared.Principal{ID: "fallback"})
+	if !reflect.DeepEqual(got, named) {
+		t.Errorf("principalFromRequest() = %#v, want named principal %#v", got, named)
+	}
+
+	request.Extra.TokenInfo.Extra["principal"] = "wrong type"
+	got = principalFromRequest(request, shared.Principal{ID: "fallback"})
+	want := shared.Principal{ID: "token-user"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("principalFromRequest(wrong type) = %#v, want token-user fallback %#v", got, want)
+	}
 }
 
 func TestSearchKB(t *testing.T) {
@@ -53,6 +81,10 @@ func TestSearchKB(t *testing.T) {
 	}
 	if searcher.query != "How do I configure a printer?" || searcher.session != "prior-session" {
 		t.Errorf("ChatWithMetrics() query/session = %q/%q, want forwarded input", searcher.query, searcher.session)
+
+		if searcher.ownerID != kb.AnonymousOwner {
+			t.Errorf("ChatWithMetrics() ownerID = %q, want %q for stdio mode", searcher.ownerID, kb.AnonymousOwner)
+		}
 	}
 	got, ok := result.StructuredContent.(map[string]any)
 	if !ok {
@@ -117,6 +149,23 @@ func TestSearchKBReturnsToolErrors(t *testing.T) {
 	}
 }
 
+func TestSearchKBReturnsSessionOwnerMismatchAsToolError(t *testing.T) {
+	ctx := context.Background()
+	searcher := &fakeSearcher{err: kb.ErrSessionOwnerMismatch}
+	session := connect(t, New(searcher, zap.NewNop()))
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_kb", Arguments: map[string]any{"query": "Where is the report?", "session_id": "claimed-by-someone-else"}})
+	if err != nil {
+		t.Fatalf("CallTool(search_kb) error = %v, want nil", err)
+	}
+	if !result.IsError {
+		t.Error("CallTool(search_kb) IsError = false, want true for a session owner mismatch")
+	}
+	if !errors.Is(searcher.err, kb.ErrSessionOwnerMismatch) {
+		t.Errorf("fake search error = %v, want ErrSessionOwnerMismatch", searcher.err)
+	}
+}
+
 func TestSearchKBRejectsEmptyQuery(t *testing.T) {
 	ctx := context.Background()
 	session := connect(t, New(&fakeSearcher{errForEmpty: true}, zap.NewNop()))
@@ -133,7 +182,7 @@ func TestSearchKBRejectsEmptyQuery(t *testing.T) {
 func TestStreamableHTTPServerExposesSearchKB(t *testing.T) {
 	ctx := context.Background()
 	searcher := &fakeSearcher{answer: kb.NewAnswer("Use Settings.", []kb.Citation{kb.NewCitation("settings.md", "printer")}, "hybrid", nil, true), sessionID: "next-session"}
-	httpServer := httptest.NewServer(NewStreamableHTTPHandler(searcher, zap.NewNop()))
+	httpServer := httptest.NewServer(NewUnauthenticatedStreamableHTTPHandler(searcher, zap.NewNop()))
 	t.Cleanup(httpServer.Close)
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "http-test", Version: "v1"}, nil)
@@ -169,7 +218,7 @@ func TestStreamableHTTPServerExposesSearchKB(t *testing.T) {
 
 func TestStreamableHTTPServerReturnsToolErrors(t *testing.T) {
 	ctx := context.Background()
-	httpServer := httptest.NewServer(NewStreamableHTTPHandler(&fakeSearcher{err: kb.ErrNotIndexed}, zap.NewNop()))
+	httpServer := httptest.NewServer(NewUnauthenticatedStreamableHTTPHandler(&fakeSearcher{err: kb.ErrNotIndexed}, zap.NewNop()))
 	t.Cleanup(httpServer.Close)
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "http-test", Version: "v1"}, nil)
@@ -190,7 +239,7 @@ func TestStreamableHTTPServerReturnsToolErrors(t *testing.T) {
 
 func TestStreamableHTTPServerRejectsEmptyQuery(t *testing.T) {
 	ctx := context.Background()
-	httpServer := httptest.NewServer(NewStreamableHTTPHandler(&fakeSearcher{errForEmpty: true}, zap.NewNop()))
+	httpServer := httptest.NewServer(NewUnauthenticatedStreamableHTTPHandler(&fakeSearcher{errForEmpty: true}, zap.NewNop()))
 	t.Cleanup(httpServer.Close)
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "http-test", Version: "v1"}, nil)

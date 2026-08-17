@@ -15,6 +15,7 @@ type Config struct {
 	Logger LoggerConfig
 	OpenAI OpenAIConfig
 	KB     KBConfig
+	Auth   AuthConfig
 }
 
 type AppConfig struct {
@@ -24,7 +25,13 @@ type AppConfig struct {
 }
 
 type HTTPConfig struct {
-	Port int `mapstructure:"port"`
+	Port        int    `mapstructure:"port"`
+	BindAddress string `mapstructure:"bind_address"`
+}
+
+type AuthConfig struct {
+	File     string `mapstructure:"file"`
+	Disabled bool   `mapstructure:"disabled"`
 }
 
 type LoggerConfig struct {
@@ -50,14 +57,24 @@ type KBConfig struct {
 }
 
 func LoadKB() (*Config, error) {
+	cfg, err := LoadAuth()
+	if err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(cfg.OpenAI.LLMMode, "fake") && cfg.OpenAI.BaseURL == "" && cfg.OpenAI.APIKey == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY is required")
+	}
+	return cfg, nil
+}
+
+// LoadAuth loads the settings needed by kbtoken without requiring the KB
+// service's LLM configuration.
+func LoadAuth() (*Config, error) {
 	v := newViper()
 
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
-	}
-	if !strings.EqualFold(cfg.OpenAI.LLMMode, "fake") && cfg.OpenAI.BaseURL == "" && cfg.OpenAI.APIKey == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY is required")
 	}
 	return &cfg, nil
 }
@@ -69,6 +86,7 @@ func newViper() *viper.Viper {
 	v.SetDefault("app.name", "knowledge-base-qa-bot")
 	v.SetDefault("app.shutdown_timeout", "10s")
 	v.SetDefault("http.port", 12598)
+	v.SetDefault("auth.disabled", false)
 	v.SetDefault("logger.level", "info")
 	v.SetDefault("logger.encoding", "json")
 	// Writes to a file by default. The kb_query / llm_usage lines are the only
@@ -89,6 +107,7 @@ func newViper() *viper.Viper {
 		"app.name":                     "APP_NAME",
 		"app.shutdown_timeout":         "APP_SHUTDOWN_TIMEOUT",
 		"http.port":                    "APP_PORT",
+		"http.bind_address":            "APP_BIND_ADDRESS",
 		"logger.level":                 "LOG_LEVEL",
 		"logger.encoding":              "LOG_ENCODING",
 		"logger.output":                "LOG_OUTPUT",
@@ -102,6 +121,8 @@ func newViper() *viper.Viper {
 		"openai.embed_model":           "KB_EMBED_MODEL",
 		"kb.docs_dir":                  "KB_DOCS_DIR",
 		"kb.index_dir":                 "KB_INDEX_DIR",
+		"auth.file":                    "KB_AUTH_FILE",
+		"auth.disabled":                "KB_AUTH_DISABLED",
 	}
 	for k, env := range binds {
 		_ = v.BindEnv(k, env)

@@ -17,7 +17,6 @@ type VectorStore interface {
 }
 
 type SessionStore interface {
-	Get(ctx context.Context, id string) []Turn
-	Append(ctx context.Context, id string, turn Turn)
+	Claim(ctx context.Context, sessionID, ownerID string) ([]Turn, error)
+	Append(ctx context.Context, sessionID, ownerID string, turn Turn) error
 }
-

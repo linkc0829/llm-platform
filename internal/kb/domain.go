@@ -1,11 +1,15 @@
 package kb
 
 import (
+	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/shared"
 )
 
 var requiredMetadata = []string{"id", "team", "product", "doc_type", "version", "access_level", "owner", "last_reviewed"}
@@ -53,6 +57,109 @@ type Section struct {
 	body    string
 	meta    map[string]string
 	images  []string
+}
+
+// SectionTier is the retrieval visibility tier assigned during index audit.
+// The zero value is invalid so an unclassified section cannot be treated as
+// public by accident.
+type SectionTier uint8
+
+const (
+	SectionTierInvalid SectionTier = iota
+	SectionTierPublic
+	SectionTierRestricted
+)
+
+var endpointRE = regexp.MustCompile(`(?m)\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE)\s+/[^\s)\]>,]+`)
+
+var engineeringMarkers = []string{
+	"**Endpoint Index**",
+	"**Verified Services/APIs**",
+	"**Verified Call Chain**",
+}
+
+// ClassifySection assigns a public or engineering-only tier and rejects
+// exporter drift that places engineering evidence under an operation heading.
+func ClassifySection(section Section) (SectionTier, error) {
+	headingRestricted := strings.Contains(section.Heading(), "工程對應")
+	contentRestricted := containsEngineeringEvidence(section.Body())
+	if contentRestricted && !headingRestricted {
+		return SectionTierInvalid, fmt.Errorf("%w: %s", ErrSectionAccessDrift, section.Citation())
+	}
+
+	switch strings.TrimSpace(section.Meta()["doc_type"]) {
+	case "ui_inventory", "playlist":
+		if headingRestricted {
+			return SectionTierInvalid, fmt.Errorf("%w: %s has engineering heading for %q", ErrInvalidSectionAccess, section.Citation(), section.Meta()["doc_type"])
+		}
+		return SectionTierPublic, nil
+	case "procedure":
+		if headingRestricted {
+			return SectionTierRestricted, nil
+		}
+		return SectionTierPublic, nil
+	default:
+		return SectionTierInvalid, fmt.Errorf("%w: %s has unknown doc_type %q", ErrInvalidSectionAccess, section.Citation(), section.Meta()["doc_type"])
+	}
+}
+
+func containsEngineeringEvidence(body string) bool {
+	for _, marker := range engineeringMarkers {
+		if strings.Contains(body, marker) {
+			return true
+		}
+	}
+	return endpointRE.MatchString(body)
+}
+
+// AuditSections validates every parsed section before it can be persisted or
+// embedded. It returns all section errors in deterministic input order.
+func AuditSections(sections []Section) error {
+	var problems []error
+	for _, section := range sections {
+		if _, err := ClassifySection(section); err != nil {
+			problems = append(problems, err)
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return errors.Join(problems...)
+}
+
+// CanSee applies the independent team and content-tier dimensions. A missing
+// or invalid principal is never granted visibility.
+func CanSee(principal shared.Principal, section Section) bool {
+	if strings.TrimSpace(principal.ID) == "" {
+		return false
+	}
+	if !principal.AllTeams && !containsTeam(principal.Teams, section.Meta()["team"]) {
+		return false
+	}
+	tier, err := ClassifySection(section)
+	if err != nil {
+		return false
+	}
+	return tier == SectionTierPublic || tier == SectionTierRestricted && principal.Engineering
+}
+
+func containsTeam(teams []string, want string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return false
+	}
+	for _, team := range teams {
+		if strings.TrimSpace(team) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// FullAccessPrincipal is used only by explicitly local transports whose
+// process/network boundary is already trusted.
+func FullAccessPrincipal(id string) shared.Principal {
+	return shared.Principal{ID: id, AllTeams: true, Engineering: true}
 }
 
 func NewSection(file, heading, body string, meta map[string]string, images []string) (Section, error) {
@@ -350,9 +457,12 @@ func (c Corpus) RankBM25(queryTokens []string) []ScoredSection {
 	return ranked
 }
 
-func RankVector(indexed []Section, vecMap map[string][]float32, query []float32, limit int) []ScoredSection {
+func RankVector(indexed []Section, vecMap map[string][]float32, query []float32, limit int, allow func(Section) bool) []ScoredSection {
 	ranked := make([]ScoredSection, 0, len(indexed))
 	for i, section := range indexed {
+		if allow != nil && !allow(section) {
+			continue
+		}
 		score := Cosine(query, vecMap[section.Citation()])
 		if score > 0 {
 			ranked = append(ranked, ScoredSection{Index: i, Score: score})
