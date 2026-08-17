@@ -46,6 +46,16 @@ func (h *Handler) index(c *gin.Context) {
 
 	files, sections, err := h.svc.Index(ctx)
 	if err != nil {
+		// The response stays generic so it cannot leak corpus structure, which
+		// leaves the log as the only place the operator can learn what to fix.
+		// An access audit failure names every offending file#anchor, and without
+		// this line "internal error" means grepping 679 sections by hand.
+		if h.logger != nil {
+			h.logger.Error("index failed",
+				zap.Error(err),
+				zap.String("request_id", c.GetString("request_id")),
+			)
+		}
 		writeError(c, err)
 		return
 	}

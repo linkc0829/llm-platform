@@ -3,12 +3,15 @@ package kb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/shared"
 )
@@ -107,6 +110,38 @@ func TestHandlerIndexUsesService(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), `"files_indexed":3`) || !strings.Contains(w.Body.String(), `"sections_indexed":10`) {
 		t.Errorf("POST /index body = %s, want indexed counts", w.Body.String())
+	}
+}
+
+// An audit failure returns a deliberately generic 500, so the log is the only
+// route by which an operator learns which section to fix. If the citation stops
+// reaching the log, /index becomes a fail-closed dead end: correct, but
+// unactionable without grepping the whole corpus by hand.
+func TestHandlerIndexLogsTheOffendingSection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	core, logs := observer.New(zap.ErrorLevel)
+	auditErr := fmt.Errorf("audit sections: %w: procedures/ADMIN/supply_period-procedure.md#步驟-1",
+		ErrSectionAccessDrift)
+	svc := &fakeHandlerService{indexErr: auditErr}
+
+	r := gin.New()
+	RegisterRoutes(r.Group(""), &Handler{svc: svc, logger: zap.New(core), principal: AnonymousPrincipal},
+		RouteGuards{AllowUnauthenticated: true})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/index", nil))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+	if strings.Contains(w.Body.String(), "supply_period") {
+		t.Errorf("response body leaks corpus structure: %s", w.Body.String())
+	}
+	entries := logs.FilterMessage("index failed").All()
+	if len(entries) != 1 {
+		t.Fatalf("index failed log entries = %d, want 1", len(entries))
+	}
+	if logged := entries[0].ContextMap()["error"]; !strings.Contains(logged.(string), "supply_period-procedure.md#步驟-1") {
+		t.Errorf("logged error = %q, want the offending citation", logged)
 	}
 }
 
