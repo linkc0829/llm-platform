@@ -45,6 +45,19 @@ runner 因此代為載入 `ENV_FILE` 並以 repo 根目錄當 cwd 啟動子程�
 stdout 一旦被重導仍會整塊緩衝 —— 實測踩過「結果檔已經到第 15 題、console 一片空白」,
 看起來像卡死,其實只是串行 24 題各 7–90 秒。
 
+**stdio 不需要 token,而這正是它的盲點。** `cmd/kbmcp` 沒有 header 可解析,
+能執行它的人本來就讀得到 `docs/`,所以它一律以 full-access principal 服務——
+這是設計,不是漏做。實務後果是:
+
+- 這份驗收**不必**設 `KB_AUTH_FILE`、不必建 token,照舊跑
+- 但 **52/52 完全證明不了分層過濾是對的**。它走的是繞過分層的那條路,
+  工程內容本來就全看得到。分層要靠 `ui-kb-validate` 用
+  `engineering=false` 的 token 跑 176 題才驗得到
+- 若改成打 HTTP 的 `/mcp`(而不是 stdio),就**需要**帶
+  `Authorization: Bearer`,而且該 token 要有 `engineering=true`,
+  否則 api / callchain 那 34 題會全部婉拒——那是權限對了、資料沒錯,
+  很容易被誤判成檢索退化
+
 刻意走 MCP 而不是 `/chat`,因為這三種壞法只有 MCP 這條路看得到:
 - server 把 log 印到 **stdout** → JSON-RPC 當場毀掉(腳本會明講是 stdout 被污染,不會只回一個 parse error)
 - tool 沒註冊、schema 改名 → `tools/call` 直接錯

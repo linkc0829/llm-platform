@@ -43,9 +43,46 @@ KB 答不出問題時,失敗一定屬於其中一層。診斷錯層就會修錯�
 
 ```powershell
 make import TEAM=<Team> FROM=<replay_dir>\kb   # 匯入(交易式,會取代同 team 舊資料)
+$env:KB_AUTH_FILE = "auth.json"                 # 服務會 fail closed,沒設就不啟動
 make run                                        # 重新編譯並啟動服務(見下方警告)
-Invoke-RestMethod -Method Post http://localhost:8080/index   # 重建索引
+# 重建索引要 indexer token(見下方「服務有 auth」)
 ```
+
+> ⚠️ **服務有 auth:沒帶 token 的驗收會是 0 分,而且看起來像服務壞了。**
+>
+> `/chat` 要 bearer token,`401` 不在可重試狀態裡,所以整批**快速失敗**——
+> console 只會刷一排 HTTP 401,不會有「你忘了帶 token」這種提示。
+>
+> `run_eval.py` 讀兩個環境變數,不必改這份受版控的樣板:
+>
+> ```powershell
+> $env:KB_EVAL_DIR   = "<replay_dir>\kb\eval"   # 取代樣板裡的 EVAL_DIR 佔位符
+> $env:KB_EVAL_TOKEN = "kb_..."                 # 不設就不帶 header
+> ```
+>
+> **要用哪一種 token,決定了你在量什麼:**
+>
+> | token | 量到的東西 |
+> | --- | --- |
+> | `all_teams=true, engineering=false`(客服/PM) | **這才是 176 題該用的。** 操作題在分層過濾後仍答得出來 |
+> | `engineering=true` | 只證明資料還在,**繞過了分層**,測不到過濾有沒有做壞 |
+> | 不帶 | 全部 401 |
+>
+> 首次要先 bootstrap 一把 admin,再用它建驗收用的 token:
+>
+> ```powershell
+> go build -o bin\kbtoken.exe .\cmd\kbtoken
+> .\bin\kbtoken.exe create-admin -name admin      # 明文只印這一次
+> # 服務啟動後,用 admin token 建 support 與 indexer 兩把
+> # POST /admin/tokens  {"name":"eval-support","all_teams":true,"engineering":false}
+> # POST /admin/tokens  {"name":"eval-indexer","all_teams":true,"indexer":true}
+> # POST /index         需要 indexer token
+> ```
+>
+> `kbtoken` 需要服務停止(有 lock file 與 `/health` 守門)。
+>
+> 埠號跟著 `.env` 的 `APP_PORT` 走(實測是 `12598`,不是 8080)——
+> 打錯埠拿到的是 curl exit 7,不是 404,很容易誤判成服務沒起來。
 
 > ⚠️ **每次驗證都必須重新編譯並重啟服務,舊行程不算數。**
 >
