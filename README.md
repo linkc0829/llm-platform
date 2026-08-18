@@ -282,6 +282,7 @@ internal/platform/httpserver
 internal/platform/atomicfile
 internal/platform/lockfile
 internal/platform/logger
+postman/                 # Postman collection covering every endpoint and its guards
 thoughts/qrspi/          # QRSPI artifacts
 ```
 
@@ -297,12 +298,25 @@ eval/<team>/             # bundle eval YAML and kb_index.json
 ## Make Targets
 
 ```powershell
-make run      # run ./cmd/kb (HTTP API + /mcp endpoint)
-make mcp      # run the stdio MCP server (dev / Inspector only)
-go run ./cmd/kbtoken list  # list auth metadata while cmd/kb is stopped
-make build    # build bin/kb, bin/kbmcp, and bin/kbtoken
-make import   # import a team bundle
-make test     # go test -race -short -count=1 ./...
-make lint     # golangci-lint run ./...
-make verify   # lint + test
+make run            # run ./cmd/kb; needs $env:KB_AUTH_FILE or KB_AUTH_DISABLED=true
+make mcp            # run the stdio MCP server (dev / Inspector only)
+make build          # build bin/kb.exe, bin/kbmcp.exe, and bin/kbtoken.exe
+make import         # import a team bundle
+make test           # go test -race -short -count=1 ./...
+make test-cover     # same, plus coverage.out and coverage.html
+make lint           # golangci-lint run ./...
+make fmt            # gofmt -s -w .
+make vet            # go vet ./...
+make verify         # lint + test
+make hooks-install  # enable .githooks/pre-commit (gofmt, lint, unit tests)
+make clean          # remove bin/ and coverage output (PowerShell/cmd only)
+
+go run ./cmd/kbtoken list   # list auth metadata while cmd/kb is stopped
 ```
+
+`make build` writes the `.exe` suffix explicitly, because `go build -o` uses the
+name verbatim rather than adding it. The Inspector command above and
+`run_eng_eval.py` both invoke `bin/kbmcp.exe`, so the suffix is not optional.
+
+Run `make hooks-install` once per clone. The hook runs `gofmt -l`, `golangci-lint`
+and the unit tests before each commit; `git commit --no-verify` skips it.
