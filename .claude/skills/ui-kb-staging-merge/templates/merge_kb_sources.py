@@ -71,7 +71,17 @@ def load_sources(args):
         return args.team, [(os.path.basename(os.path.normpath(s)), os.path.abspath(s))
                            for s in args.source]
     if not os.path.isfile(args.manifest):
-        die("manifest %r not found" % os.path.abspath(args.manifest))
+        # Nothing generates this file: which directories feed a team is a
+        # decision, not a build product. Show the shape rather than scaffold a
+        # copy whose paths would be wrong on this machine anyway.
+        die("manifest %r not found. Write it (forward slashes; roots are the\n"
+            "source directories that CONTAIN kb/, not kb/ itself):\n"
+            '  {\n'
+            '    "team": "Store.POS",\n'
+            '    "sources": [\n'
+            '      { "name": "admin-replay", "root": "C:/Protech/admin-replay" }\n'
+            '    ]\n'
+            '  }' % os.path.abspath(args.manifest))
     with open(args.manifest, encoding="utf-8") as handle:
         manifest = json.load(handle)
     team = args.team or manifest.get("team")
