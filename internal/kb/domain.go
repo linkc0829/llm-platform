@@ -88,7 +88,7 @@ func ClassifySection(section Section) (SectionTier, error) {
 	}
 
 	switch strings.TrimSpace(section.Meta()["doc_type"]) {
-	case "ui_inventory", "playlist":
+	case "ui_inventory", "playlist", "reference":
 		if headingRestricted {
 			return SectionTierInvalid, fmt.Errorf("%w: %s has engineering heading for %q", ErrInvalidSectionAccess, section.Citation(), section.Meta()["doc_type"])
 		}
