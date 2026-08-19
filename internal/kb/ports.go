@@ -11,9 +11,13 @@ type Embedder interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
+type embedIdentifier interface {
+	EmbedIdentity() string
+}
+
 type VectorStore interface {
 	Load(ctx context.Context) (string, map[string][]float32, error)
-	Save(ctx context.Context, model string, vectors map[string][]float32) error
+	Save(ctx context.Context, identity string, vectors map[string][]float32) error
 }
 
 type SessionStore interface {

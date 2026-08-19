@@ -2,6 +2,7 @@ package kb
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -114,14 +115,14 @@ func (s *Service) LoadOnStartup(ctx context.Context) error {
 	vecMap := map[string][]float32{}
 	stale := false
 	if s.vectors != nil {
-		model, loaded, err := s.vectors.Load(ctx)
+		identity, loaded, invalid, err := s.loadVectorCache(ctx)
 		if err != nil {
-			return fmt.Errorf("load vectors: %w", err)
+			return err
 		}
-		if len(loaded) > 0 && model != s.embedModel {
+		if invalid || identity != "" && identity != s.embeddingIdentity() {
 			stale = true
 		} else {
-			vecMap = loaded
+			vecMap = citationVectors(secs, loaded)
 		}
 	}
 
@@ -243,22 +244,90 @@ func (s *Service) embedSections(ctx context.Context, secs []Section) (map[string
 		return map[string][]float32{}, nil
 	}
 
-	embs, err := s.embedder.Embed(ctx, bodiesOf(secs))
+	identity, cached, _, err := s.loadVectorCache(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("embed sections: %w", err)
+		return nil, err
 	}
-	if len(embs) != len(secs) {
-		return nil, fmt.Errorf("embed sections: got %d vectors, want %d", len(embs), len(secs))
+	if identity != "" && identity != s.embeddingIdentity() {
+		cached = map[string][]float32{}
 	}
 
-	vecMap := make(map[string][]float32, len(secs))
-	for i, sec := range secs {
-		vecMap[sec.Citation()] = embs[i]
+	hashVectors := make(map[string][]float32, len(secs))
+	missingHashes := make([]string, 0, len(secs))
+	missingBodies := make([]string, 0, len(secs))
+	seen := make(map[string]bool, len(secs))
+	for _, sec := range secs {
+		hash := sectionBodyHash(sec.Body())
+		if seen[hash] {
+			continue
+		}
+		seen[hash] = true
+		if vector, ok := cached[hash]; ok && len(vector) > 0 {
+			hashVectors[hash] = cloneVector(vector)
+			continue
+		}
+		missingHashes = append(missingHashes, hash)
+		missingBodies = append(missingBodies, sec.Body())
 	}
-	if err := s.vectors.Save(ctx, s.embedModel, vecMap); err != nil {
+
+	if len(missingBodies) > 0 {
+		embs, err := s.embedder.Embed(ctx, missingBodies)
+		if err != nil {
+			return nil, fmt.Errorf("embed sections: %w", err)
+		}
+		if len(embs) != len(missingBodies) {
+			return nil, fmt.Errorf("embed sections: got %d vectors, want %d", len(embs), len(missingBodies))
+		}
+		for i, vector := range embs {
+			hashVectors[missingHashes[i]] = cloneVector(vector)
+		}
+	}
+	if err := s.vectors.Save(ctx, s.embeddingIdentity(), hashVectors); err != nil {
 		return nil, fmt.Errorf("save vectors: %w", err)
 	}
-	return vecMap, nil
+	return citationVectors(secs, hashVectors), nil
+}
+
+func (s *Service) loadVectorCache(ctx context.Context) (string, map[string][]float32, bool, error) {
+	identity, vectors, err := s.vectors.Load(ctx)
+	if errors.Is(err, ErrVectorCacheFormat) {
+		return "", map[string][]float32{}, true, nil
+	}
+	if err != nil {
+		return "", nil, false, fmt.Errorf("load vectors: %w", err)
+	}
+	if vectors == nil {
+		vectors = map[string][]float32{}
+	}
+	return identity, vectors, false, nil
+}
+
+func (s *Service) embeddingIdentity() string {
+	if identifier, ok := s.embedder.(embedIdentifier); ok {
+		if identity := strings.TrimSpace(identifier.EmbedIdentity()); identity != "" {
+			return identity
+		}
+	}
+	return s.embedModel
+}
+
+func sectionBodyHash(body string) string {
+	hash := sha256.Sum256([]byte(body))
+	return fmt.Sprintf("%x", hash)
+}
+
+func citationVectors(sections []Section, hashVectors map[string][]float32) map[string][]float32 {
+	vecMap := make(map[string][]float32, len(sections))
+	for _, section := range sections {
+		if vector := hashVectors[sectionBodyHash(section.Body())]; len(vector) > 0 {
+			vecMap[section.Citation()] = cloneVector(vector)
+		}
+	}
+	return vecMap
+}
+
+func cloneVector(vector []float32) []float32 {
+	return append([]float32(nil), vector...)
 }
 
 func (s *Service) storeIndexSnapshot(indexed []Section, corpus Corpus, vecMap map[string][]float32, ready bool) {
@@ -365,14 +434,6 @@ func composeQuery(history []Turn, query string) string {
 	}
 	b.WriteString(query)
 	return b.String()
-}
-
-func bodiesOf(sections []Section) []string {
-	bodies := make([]string, 0, len(sections))
-	for _, section := range sections {
-		bodies = append(bodies, section.Body())
-	}
-	return bodies
 }
 
 // imagesOf collects the screenshot paths of the cited sections, deduplicated and

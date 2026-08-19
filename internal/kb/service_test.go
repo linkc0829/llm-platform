@@ -56,10 +56,11 @@ func (f *fakeLLM) Answer(_ context.Context, query string, sections []Section, hi
 }
 
 type fakeEmbedder struct {
-	vectors map[string][]float32
-	err     error
-	calls   int
-	texts   []string
+	vectors  map[string][]float32
+	err      error
+	calls    int
+	texts    []string
+	identity string
 }
 
 func (f *fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
@@ -75,6 +76,10 @@ func (f *fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, er
 	return out, nil
 }
 
+func (f *fakeEmbedder) EmbedIdentity() string {
+	return f.identity
+}
+
 type fakeVectorStore struct {
 	loadModel   string
 	loadVectors map[string][]float32
@@ -88,9 +93,13 @@ func (f *fakeVectorStore) Load(_ context.Context) (string, map[string][]float32,
 	return f.loadModel, f.loadVectors, f.loadErr
 }
 
-func (f *fakeVectorStore) Save(_ context.Context, model string, vectors map[string][]float32) error {
-	f.savedModel = model
+func (f *fakeVectorStore) Save(_ context.Context, identity string, vectors map[string][]float32) error {
+	f.savedModel = identity
 	f.saved = vectors
+	if f.saveErr == nil {
+		f.loadModel = identity
+		f.loadVectors = vectors
+	}
 	return f.saveErr
 }
 
