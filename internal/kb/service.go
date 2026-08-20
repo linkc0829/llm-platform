@@ -330,7 +330,12 @@ func cloneVector(vector []float32) []float32 {
 	return append([]float32(nil), vector...)
 }
 
+// storeIndexSnapshot publishes a new index and takes ownership of indexed,
+// stamping each section's tier in place first. Every path that serves queries
+// goes through here, so this is the one spot where "no section is published
+// unclassified" can be guaranteed rather than remembered.
 func (s *Service) storeIndexSnapshot(indexed []Section, corpus Corpus, vecMap map[string][]float32, ready bool) {
+	StampTiers(indexed)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.indexed = indexed

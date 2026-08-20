@@ -57,6 +57,7 @@ type Section struct {
 	body    string
 	meta    map[string]string
 	images  []string
+	tier    SectionTier
 }
 
 // SectionTier is the retrieval visibility tier assigned during index audit.
@@ -136,11 +137,31 @@ func CanSee(principal shared.Principal, section Section) bool {
 	if !principal.AllTeams && !containsTeam(principal.Teams, section.Meta()["team"]) {
 		return false
 	}
-	tier, err := ClassifySection(section)
-	if err != nil {
-		return false
+	// Read the tier StampTiers assigned, do not re-derive it. ClassifySection
+	// regex-scans the body, and this ran ~2790 times per query (once per section
+	// in filterRankedSections, again inside RankVector) to reproduce a value
+	// AuditSections had already proved at index time — 28.6ms of the 38.5ms of
+	// local CPU a query spent, measured in BenchmarkCanSeeAll and
+	// BenchmarkRankVector. A section that never reached StampTiers keeps the
+	// zero value, SectionTierInvalid, and is therefore invisible rather than
+	// public.
+	return section.tier == SectionTierPublic ||
+		section.tier == SectionTierRestricted && principal.Engineering
+}
+
+// StampTiers records each section's visibility tier so queries can read it
+// instead of deriving it.
+//
+// Sections that fail classification are left at SectionTierInvalid rather than
+// reported: AuditSections is the fail-loud gate and it runs first on every path
+// that indexes. This one runs later, at the point the snapshot is taken, so
+// there is no way to publish sections that were never stamped.
+func StampTiers(sections []Section) {
+	for i := range sections {
+		if tier, err := ClassifySection(sections[i]); err == nil {
+			sections[i].tier = tier
+		}
 	}
-	return tier == SectionTierPublic || tier == SectionTierRestricted && principal.Engineering
 }
 
 func containsTeam(teams []string, want string) bool {
@@ -179,6 +200,10 @@ func (s Section) Anchor() string          { return s.anchor }
 func (s Section) Body() string            { return s.body }
 func (s Section) Meta() map[string]string { return s.meta }
 func (s Section) Images() []string        { return s.images }
+
+// Tier is the visibility tier StampTiers assigned; the zero value is
+// SectionTierInvalid, so an unstamped section is never visible.
+func (s Section) Tier() SectionTier { return s.tier }
 
 func (s Section) Citation() string {
 	return s.file + "#" + s.anchor

@@ -302,5 +302,13 @@ func accessTestSection(t *testing.T, heading, body, docType, team string) Sectio
 	if err != nil {
 		t.Fatalf("NewSection(%q) error = %v, want nil", heading, err)
 	}
-	return section
+	// Hand the section back in the state the service publishes it in. CanSee
+	// reads the stamped tier, so an unstamped section is invisible regardless of
+	// its content — correct for production, but it would make these tests assert
+	// the fail-closed default instead of the rule they are about. A section that
+	// fails classification stays SectionTierInvalid, which is what the
+	// drift cases want.
+	stamped := []Section{section}
+	StampTiers(stamped)
+	return stamped[0]
 }
