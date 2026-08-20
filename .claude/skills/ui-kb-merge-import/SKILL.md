@@ -1,5 +1,5 @@
 ---
-name: ui-kb-staging-merge
+name: ui-kb-merge-import
 description: Merge several per-source KB bundles (admin-replay / wpf-replay / pm-reference) into one staging tree and carry it through to a live corpus — copies `modules/` beside `kb/`, concatenates `eng_eval.yaml`, merges `kb_index.json` with collision checks, then `kbimport -check`, backup, `make import`, `POST /index`, and the baseline update. This is the ONLY place `make import` belongs: it replaces `docs/<team>/` and `eval/<team>/` wholesale and neither is version controlled. Use when a new KB source is added, when one source changed and the corpus must be rebuilt, or whenever someone is about to run kbimport or make import by hand. Triggers "合併 KB 來源", "併 staging", "匯入前的合併", "匯入 KB", "重新匯入 KB", "重建語料", "跑 kbimport", "make import", "更新 baseline", "merge kb sources", "staging tree", "新增第四份來源", "import kb bundle".
 ---
 
@@ -11,7 +11,7 @@ description: Merge several per-source KB bundles (admin-replay / wpf-replay / pm
 | 階段 | 工具 |
 | :--- | :--- |
 | replay workspace → `kb/` | `ui-kb-export` + `export_kb.py` |
-| 手寫 md → `kb/` | `ui-kb-reference-import` + `convert_reference_bundle.py` |
+| 手寫 md → `kb/` | `ui-kb-reference-bundle` + `convert_reference_bundle.py` |
 | **多份 `kb/` → staging** | **這支** |
 | staging → `docs/` | `cmd/kbimport` |
 
@@ -19,7 +19,7 @@ description: Merge several per-source KB bundles (admin-replay / wpf-replay / pm
 
 ## 這一段幾乎全是決定性的
 
-專案 Rule 5 ——「If code can answer, code answers」。和 `ui-kb-reference-import`
+專案 Rule 5 ——「If code can answer, code answers」。和 `ui-kb-reference-bundle`
 剛好相反:那支一半靠判斷,這支**幾乎沒有判斷**,所以腳本重、這份文件輕。
 
 | 工作 | 誰做 |
@@ -63,7 +63,7 @@ repo 根目錄,受版控:
 ### 1. 先看一眼
 
 ```bash
-python .claude/skills/ui-kb-staging-merge/templates/merge_kb_sources.py --report-only
+python .claude/skills/ui-kb-merge-import/templates/merge_kb_sources.py --report-only
 ```
 
 跑完所有檢查但不寫檔:
@@ -82,7 +82,7 @@ python .claude/skills/ui-kb-staging-merge/templates/merge_kb_sources.py --report
 ### 2. 產出
 
 ```bash
-python .claude/skills/ui-kb-staging-merge/templates/merge_kb_sources.py --out C:/tmp/staging
+python .claude/skills/ui-kb-merge-import/templates/merge_kb_sources.py --out C:/tmp/staging
 ```
 
 `--out` 必須是空的或不存在(`--force` 才會先砍掉重建)。**每次合併都用一棵全新的樹。**
@@ -158,7 +158,7 @@ finally { Remove-Item Env:KB_BASELINE_DOCS -ErrorAction SilentlyContinue }
 它驗的是「這棵樹自洽」,不是「這棵樹完整」。
 
 ```
-1. 只重跑那一份的產出     ui-kb-export / ui-kb-reference-import
+1. 只重跑那一份的產出     ui-kb-export / ui-kb-reference-bundle
 2. 合併全部              merge_kb_sources.py        ← 一定要全部
 3. kbimport -check
 4. 備份 docs/ eval/ .kb/  ← 下一步不可逆

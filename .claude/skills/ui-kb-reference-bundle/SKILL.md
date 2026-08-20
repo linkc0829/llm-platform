@@ -1,6 +1,6 @@
 ---
-name: ui-kb-reference-import
-description: Turn a directory of hand-written markdown (PM knowledge, UIUX notes, RFCs, onboarding docs) into a `reference` bundle the Go KB service accepts — metadata backfill and id generation by script, section restructuring and eval questions by judgement. Use when documents that were NOT produced by ui-kb-export need to enter the KB, when a source has no `kb/` bundle of its own, or when /index rejects a doc_type. Triggers "PM 文件進 KB", "手寫 md 轉 KB", "UIUX 文件進知識庫", "把 knowledge 轉成 bundle", "reference bundle", "新增 doc_type", "convert reference docs to kb", "hand-written docs into kb".
+name: ui-kb-reference-bundle
+description: Turn a directory of hand-written markdown (PM knowledge, UIUX notes, RFCs, onboarding docs) into a `reference` bundle the Go KB service accepts — metadata backfill and id generation by script, section restructuring and eval questions by judgement. Produces the bundle and stops there; merging it into a corpus and importing belong to ui-kb-merge-import, so never run kbimport or make import from here. Use when documents that were NOT produced by ui-kb-export need to enter the KB, when a source has no `kb/` bundle of its own, or when /index rejects a doc_type. Triggers "PM 文件進 KB", "手寫 md 轉 KB", "UIUX 文件進知識庫", "把 knowledge 轉成 bundle", "reference bundle", "新增 doc_type", "convert reference docs to kb", "hand-written docs into kb".
 ---
 
 # 手寫文件 → `reference` bundle
@@ -123,13 +123,13 @@ bundle 產出後就結束了。**不要在這裡執行合併或 `make import`。
 
 | 接下來 | 交給 |
 | :--- | :--- |
-| 與其他來源合併成 staging、`kbimport -check`、`make import`、`POST /index` | `ui-kb-staging-merge` |
+| 與其他來源合併成 staging、`kbimport -check`、`make import`、`POST /index` | `ui-kb-merge-import` |
 | 客服問答驗收 | `ui-kb-validate` |
 | 工程問答驗收(`search_kb` MCP) | `ui-kb-eng-validate` |
 
 > **為什麼切在這裡:** `make import` 的 `replaceTeam` 會**整個換掉**
 > `docs/<team>/` 與 `eval/<team>/`,而它們不受版控 —— 這是整條鏈上唯一救不回來的
-> 一步。它只能出現在一個地方,而那個地方是 `ui-kb-staging-merge`(它會處理備份、
+> 一步。它只能出現在一個地方,而那個地方是 `ui-kb-merge-import`(它會處理備份、
 > `modules/` 併入、`eng_eval.yaml` 串接與 baseline)。
 >
 > 舊版這裡寫著「與其他來源一起併進 staging 後」再接兩行 import 指令,卻沒說**怎麼併**。
@@ -142,22 +142,21 @@ bundle 產出後就結束了。**不要在這裡執行合併或 `make import`。
 
 全部實際踩過。每一個的失敗模式都**不會報錯**。
 
-### 1. `kb_index.json` 必須在 `FROM` 根層
+### 1. `kb_index.json` 要在 **bundle 根層**,不能放進 `eval/`
 
-`validateEvalIndex` 讀的是 `filepath.Join(eval, "kb_index.json")`
-(`cmd/kbimport/main.go:204`)—— **暫存 eval 根目錄,不會往下找**。
-放進 `eval/` 子目錄 → import 直接失敗說找不到檔案。
+`validateEvalIndex` 讀死 `filepath.Join(eval, "kb_index.json")`
+(`cmd/kbimport/main.go:204`)—— 只看根層,不會往下找。合併時 bundle 根層會變成
+staging 的 `FROM` 根層,所以放錯層在這裡看不出來,要到 import 才失敗。
 
 eval YAML 反而放哪一層都行,`validateEvalIndex` 是 `WalkDir` 找 `*-eval.yaml`。
 
-### 2. eval YAML 必須放進 bundle,否則會被 import 清掉
+### 2. eval YAML 必須寫進 bundle,不能只放在 `eval/<team>/`
 
-`replaceTeam`(`main.go:94`)**整個換掉** `eval/<team>/`。任何只存在於
-`eval/<team>/` 而不在 bundle 裡的檔案,下次 import 就消失。
+`replaceTeam`(`main.go:94`)**整個換掉** `eval/<team>/`。只存在於那裡、不在任何
+bundle 裡的題目,下次 import 就消失 —— 而且是無聲的,eval 只會變少不會報錯。
 
-前車之鑑:`eng_eval.yaml` 在來源的 `kb/` **根層**,合併 staging 時只併了
-`procedures/` `ui_inventory/` `playlists/` `eval/` 四個子目錄 —— 差一點讓
-52 題工程 eval 全部蒸發。
+> 這條的另一半(合併時漏掉 `kb/` **根層**的 `eng_eval.yaml`,差點蒸發 52 題)屬於
+> `ui-kb-merge-import`。**這支 skill 的責任只到「題目在我產出的 bundle 裡」。**
 
 ### 3. 段落大小有兩個獨立理由
 
