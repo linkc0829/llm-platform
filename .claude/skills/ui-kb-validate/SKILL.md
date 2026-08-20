@@ -42,11 +42,19 @@ KB 答不出問題時,失敗一定屬於其中一層。診斷錯層就會修錯�
 前置(依 KB 服務 README):
 
 ```powershell
-make import TEAM=<Team> FROM=<replay_dir>\kb   # 匯入(交易式,會取代同 team 舊資料)
+# 匯入交給 ui-kb-staging-merge —— 不要在這裡直接 make import,原因見下方警告
 $env:KB_AUTH_FILE = "auth.json"                 # 服務會 fail closed,沒設就不啟動
 make run                                        # 重新編譯並啟動服務(見下方警告)
 # 重建索引要 indexer token(見下方「服務有 auth」)
 ```
+
+> 🚨 **不要用 `FROM=<replay_dir>\kb` 匯入單一來源。** `make import` 的 `replaceTeam`
+> 把 `docs/<team>/` **整個換掉**,所以只餵一份來源等於把同 team 的其他來源從語料裡
+> 刪除 —— 而且 `kbimport -check` **會全綠**(它驗的是「這棵樹自洽」,不是「這棵樹
+> 完整」),`docs/` 又不受版控。這條指令在只有單一 replay 來源的年代是對的;
+> 現在 `Store.POS` 由 admin-replay + wpf-replay + pm-reference 三份組成。
+>
+> 匯入(含合併、備份、`-check`、`/index`、baseline)一律走 `ui-kb-staging-merge`。
 
 > ⚠️ **服務有 auth:沒帶 token 的驗收會是 0 分,而且看起來像服務壞了。**
 >
@@ -100,7 +108,8 @@ make run                                        # 重新編譯並啟動服務(�
 > (Get-Item kb.exe).LastWriteTime      # 應晚於 internal/kb/*.go 的修改時間
 > ```
 >
-> 只改 `kb/` 資料(重新 export)時不必重編,但**要重跑 `make import` + `POST /index`**;
+> 只改 `kb/` 資料(重新 export)時不必重編,但**要重跑一次完整匯入**
+> (`ui-kb-staging-merge`:重併全部來源 → check → import → `/index`);
 > 只改 Go 程式碼時不必重新 import,但**一定要重編並重啟**。兩者都改就兩者都做。
 
 複製 `templates/run_eval.py`,填 `EVAL_DIR`(= `eval/<Team>/`),執行。它做四件事:

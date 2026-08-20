@@ -117,22 +117,28 @@ questions:
 至少補 1–2 題 `must_not_infer: true`,問文件明確沒寫的東西 —— 它同時守住
 「手寫文件不得夾帶工程細節」這個契約。
 
-### 5. 合併、check、import
+### 5. 交棒 —— **這支 skill 到此為止**
 
-新 bundle 與其他來源一起併進 staging 後:
+bundle 產出後就結束了。**不要在這裡執行合併或 `make import`。**
 
-```bash
-go run ./cmd/kbimport -team <TEAM> -from <staging>\kb -check
-make import TEAM=<TEAM> FROM=<staging>\kb
-```
+| 接下來 | 交給 |
+| :--- | :--- |
+| 與其他來源合併成 staging、`kbimport -check`、`make import`、`POST /index` | `ui-kb-staging-merge` |
+| 客服問答驗收 | `ui-kb-validate` |
+| 工程問答驗收(`search_kb` MCP) | `ui-kb-eng-validate` |
 
-### 6. 更新 baseline,跑 eval
-
-見下面「六個安靜的坑」第 3、4 點。
+> **為什麼切在這裡:** `make import` 的 `replaceTeam` 會**整個換掉**
+> `docs/<team>/` 與 `eval/<team>/`,而它們不受版控 —— 這是整條鏈上唯一救不回來的
+> 一步。它只能出現在一個地方,而那個地方是 `ui-kb-staging-merge`(它會處理備份、
+> `modules/` 併入、`eng_eval.yaml` 串接與 baseline)。
+>
+> 舊版這裡寫著「與其他來源一起併進 staging 後」再接兩行 import 指令,卻沒說**怎麼併**。
+> 那等於要求臨場發揮合併,而漏掉 `modules/`(圖片全滅)或根層的 `eng_eval.yaml`
+> (52 題無聲蒸發)正是實際踩過的兩個坑。合併現在有腳本了,不要重新發明。
 
 ---
 
-## 六個安靜的坑
+## 四個安靜的坑
 
 全部實際踩過。每一個的失敗模式都**不會報錯**。
 
@@ -153,36 +159,11 @@ eval YAML 反而放哪一層都行,`validateEvalIndex` 是 `WalkDir` 找 `*-eval
 `procedures/` `ui_inventory/` `playlists/` `eval/` 四個子目錄 —— 差一點讓
 52 題工程 eval 全部蒸發。
 
-### 3. `docs/` 與 `eval/` 不受版控
-
-`.gitignore:47-48`。**import 無法用 git 還原。** 動手前備份 `docs/`、`eval/`、`.kb/`。
-
-### 4. baseline 要取 import **之後**的 fingerprint
-
-import 會把圖片引用改寫成 `_assets/...`,而 **body 正是 fingerprint 的輸入**。
-所以 staging 乾跑的值與 `docs/` 的值**必然不同**:
-
-| | fingerprint |
-| :--- | :--- |
-| staging 乾跑 | `5116dc07…` |
-| `docs/`(寫進 baseline 的) | `7ed4223f…` |
-
-段數與分類分布兩邊相同,只有 fingerprint 不同。貼錯 → baseline 永遠紅。
-
-取值方式(**跑完一定要清掉環境變數**,否則後續 `go test ./...` 會靜默跳過
-baseline 斷言而假綠):
-
-```powershell
-$env:KB_BASELINE_DOCS = (Resolve-Path .\docs).Path
-try { go test ./internal/kb -run TestCurrentCorpusClassificationBaseline -v }
-finally { Remove-Item Env:KB_BASELINE_DOCS -ErrorAction SilentlyContinue }
-```
-
-### 5. 段落大小有兩個獨立理由
+### 3. 段落大小有兩個獨立理由
 
 見上面步驟 2。只解決配額而不管檢索品質,eval 會過不了但看起來像模型爛。
 
-### 6. 加新 `doc_type` 是安全契約,不是慣例
+### 4. 加新 `doc_type` 是安全契約,不是慣例
 
 `ClassifySection`(`internal/kb/domain.go`)的 switch **每個分支的語意不同**:
 

@@ -1,6 +1,6 @@
 ---
 name: ui-kb-staging-merge
-description: Merge several per-source KB bundles (admin-replay / wpf-replay / pm-reference) into one staging tree that `kbimport -check` accepts — copies `modules/` beside `kb/`, concatenates `eng_eval.yaml`, and merges `kb_index.json` with collision checks. Use before `kbimport -check` or `make import`, when a new KB source is added, or when one source's content changed and the corpus needs rebuilding. Triggers "合併 KB 來源", "併 staging", "匯入前的合併", "merge kb sources", "staging tree", "新增第四份來源", "重新匯入 KB".
+description: Merge several per-source KB bundles (admin-replay / wpf-replay / pm-reference) into one staging tree and carry it through to a live corpus — copies `modules/` beside `kb/`, concatenates `eng_eval.yaml`, merges `kb_index.json` with collision checks, then `kbimport -check`, backup, `make import`, `POST /index`, and the baseline update. This is the ONLY place `make import` belongs: it replaces `docs/<team>/` and `eval/<team>/` wholesale and neither is version controlled. Use when a new KB source is added, when one source changed and the corpus must be rebuilt, or whenever someone is about to run kbimport or make import by hand. Triggers "合併 KB 來源", "併 staging", "匯入前的合併", "匯入 KB", "重新匯入 KB", "重建語料", "跑 kbimport", "make import", "更新 baseline", "merge kb sources", "staging tree", "新增第四份來源", "import kb bundle".
 ---
 
 # 多來源 `kb/` → staging 樹
@@ -89,20 +89,59 @@ python .claude/skills/ui-kb-staging-merge/templates/merge_kb_sources.py --out C:
 
 一次性合併不想動 manifest 時:`--source <root> --source <root> --team <TEAM>`。
 
-### 3. check 與 import
+### 3. check
 
 ```bash
 go run ./cmd/kbimport -team Store.POS -from C:/tmp/staging/kb -check
 ```
 
+**exit 0 才往下走。** 這一步不會替換 `docs/` 的內容(它只在 `docs/` 旁建暫存目錄再丟掉)。
+
+### 4. 備份 —— import **之前**,不是之後
+
+`docs/`、`eval/` 在 `.gitignore:47-48`,`.kb/` 也不受版控。**`make import` 無法用
+git 還原**,而 `replaceTeam`(`cmd/kbimport/main.go:94`)是整個目錄換掉,不是合併。
+
+```powershell
+$bak = "C:\Protech\_kb-backup-$(Get-Date -Format yyyyMMdd-HHmmss)"
+New-Item -ItemType Directory -Force $bak | Out-Null
+Copy-Item -Recurse docs, eval, .kb $bak
+```
+
+還原:刪掉 `docs`/`eval`/`.kb`,複製回來,重啟服務(不必重跑 `/index`)。
+
+### 5. import
+
 ```bash
 make import TEAM=Store.POS FROM=C:/tmp/staging/kb
 ```
 
-### 4. 重建索引與 eval
+### 6. 重建索引
 
-`POST /index`(只有變動的段落會重新 embed),然後跑 eval,最後更新 baseline ——
-見 `ui-kb-reference-import` 的第 4 點。
+`POST /index`。只有 body 變動的段落會重新 embed —— 向量快取以 body 的 sha256 為 key,
+所以改檔名、改標題、調段落順序都是免費的;被刪掉的文件其向量也會一併消失
+(`embedSections` 是從當前語料重建 map,不是往舊快取追加)。
+
+想強制全量重算就先刪 `.kb/faiss_index/vectors.bin`。實測 1395 段:全量 54s、全命中 2.1s。
+
+### 7. 更新 baseline,跑 eval
+
+baseline 的 fingerprint **一定要取 import 之後的**。import 會把圖片引用改寫成
+`_assets/...`,而 **body 正是 fingerprint 的輸入**,所以 staging 乾跑的值與 `docs/`
+的值**必然不同**(實例:staging `5116dc07…` vs `docs/` `7ed4223f…`)。段數與分類
+分布兩邊相同,只有 fingerprint 不同 —— 貼錯 baseline 永遠紅。
+
+```powershell
+$env:KB_BASELINE_DOCS = (Resolve-Path .\docs).Path
+try { go test ./internal/kb -run TestCurrentCorpusClassificationBaseline -v }
+finally { Remove-Item Env:KB_BASELINE_DOCS -ErrorAction SilentlyContinue }
+```
+
+**`try/finally` 不是講究。** 環境變數留在 session 裡會讓後續 `go test ./...`
+**靜默跳過** baseline 斷言而假綠。
+
+問答驗收交給 `ui-kb-validate`(客服)與 `ui-kb-eng-validate`(工程 `search_kb`);
+後者的前提是前者已經過關。
 
 ---
 
@@ -119,12 +158,13 @@ make import TEAM=Store.POS FROM=C:/tmp/staging/kb
 它驗的是「這棵樹自洽」,不是「這棵樹完整」。
 
 ```
-1. 只重跑那一份的產出     export_kb.py / convert_reference_bundle.py
+1. 只重跑那一份的產出     ui-kb-export / ui-kb-reference-import
 2. 合併全部              merge_kb_sources.py        ← 一定要全部
 3. kbimport -check
-4. make import
-5. POST /index           只有變動的段落重新 embed
-6. eval + baseline
+4. 備份 docs/ eval/ .kb/  ← 下一步不可逆
+5. make import
+6. POST /index           只有變動的段落重新 embed
+7. baseline + eval
 ```
 
 代價其實很低。貴的是 embedding 不是合併:上一輪 1395 段裡 674 段命中內容定址向量
