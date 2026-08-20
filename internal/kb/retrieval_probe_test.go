@@ -48,6 +48,29 @@ type probeQuery struct {
 	// vector side is the one failing, and "the file ranked" is not the same as
 	// "the answering section ranked".
 	WantAnchor string `json:"wantAnchor"`
+	// Prior is the questions asked earlier in the same session, oldest first.
+	//
+	// Service.chat does not rank the query the caller sent: composeQuery
+	// concatenates up to five previous questions in front of it and the result
+	// feeds both the BM25 tokens and the embedding. Leaving that out meant every
+	// number this probe (and the evals, which ask each question in its own
+	// session) has ever produced described single-turn retrieval only, while real
+	// sessions rank a query the probe never saw. Empty keeps the old behaviour.
+	Prior []string `json:"prior"`
+	// Shape groups cases in the summary ("follow-up", "topic-switch",
+	// "anaphora", ...). Dilution and topic-stickiness fail differently, so one
+	// pooled hit rate would average away the only thing worth seeing.
+	Shape string `json:"shape"`
+}
+
+// priorTurns adapts the probe's plain strings to what composeQuery consumes.
+// Only Query is read there, so the answers can stay empty.
+func priorTurns(prior []string) []Turn {
+	turns := make([]Turn, 0, len(prior))
+	for _, q := range prior {
+		turns = append(turns, Turn{Query: q})
+	}
+	return turns
 }
 
 // rankOf reports the 1-based position of the first section whose anchor contains
@@ -151,10 +174,16 @@ func TestRetrievalProbe(t *testing.T) {
 		}
 	}
 
+	type shapeStat struct{ hits, asked int }
+	shapes := map[string]*shapeStat{}
+	shapeOrder := []string{}
+
 	var stepHits, areaHits, boilerplate, total int
 	for _, tc := range probeQueries {
-		// Mirror Service.chat exactly: same candidate trimming, same fusion, same k.
-		bm25List := corpus.RankBM25(tokenize(tc.Query))
+		// Mirror Service.chat exactly: same composed query, same candidate
+		// trimming, same fusion, same k.
+		retrievalQuery := composeQuery(priorTurns(tc.Prior), tc.Query)
+		bm25List := corpus.RankBM25(tokenize(retrievalQuery))
 		for len(bm25List) > 0 && bm25List[len(bm25List)-1].Score <= 0 {
 			bm25List = bm25List[:len(bm25List)-1]
 		}
@@ -162,12 +191,12 @@ func TestRetrievalProbe(t *testing.T) {
 			bm25List = bm25List[:candidateK]
 		}
 		var vecList []ScoredSection
-		if vectors, err := oai.Embed(ctx, []string{tc.Query}); err == nil && len(vectors) > 0 {
+		if vectors, err := oai.Embed(ctx, []string{retrievalQuery}); err == nil && len(vectors) > 0 {
 			vecList = RankVector(indexed, vecMap, vectors[0], candidateK, func(section Section) bool {
 				return CanSee(FullAccessPrincipal(AnonymousOwner), section)
 			})
 		} else if err != nil {
-			t.Fatalf("Embed(%q) error = %v — is the embedder reachable?", tc.Query, err)
+			t.Fatalf("Embed(%q) error = %v — is the embedder reachable?", retrievalQuery, err)
 		}
 		ranked := bm25List
 		if len(vecList) > 0 && len(bm25List) > 0 {
@@ -199,6 +228,20 @@ func TestRetrievalProbe(t *testing.T) {
 		if hitArea {
 			areaHits++
 		}
+		if tc.WantArea != "" {
+			shape := tc.Shape
+			if shape == "" {
+				shape = "single-turn"
+			}
+			if _, ok := shapes[shape]; !ok {
+				shapes[shape] = &shapeStat{}
+				shapeOrder = append(shapeOrder, shape)
+			}
+			shapes[shape].asked++
+			if hitArea {
+				shapes[shape].hits++
+			}
+		}
 		if tc.WantAnchor != "" {
 			// Unfused ranks: which channel is failing is invisible in the fused list.
 			t.Logf("[bm25=%-3d vec=%-3d fused=%-3d] %s  (want %q, bm25 candidates=%d)",
@@ -206,6 +249,10 @@ func TestRetrievalProbe(t *testing.T) {
 				rankOf(vecList, indexed, tc.WantAnchor),
 				rankOf(ranked, indexed, tc.WantAnchor),
 				tc.Query, tc.WantAnchor, len(bm25List))
+		}
+		if len(tc.Prior) > 0 {
+			// The string that was actually ranked, not the one that was asked.
+			t.Logf("[%s] ranked %q", tc.Shape, retrievalQuery)
 		}
 		t.Logf("[step=%-5v area=%-5v] %-22s -> %v", hitStep, hitArea, tc.Query, anchors)
 	}
@@ -221,6 +268,13 @@ func TestRetrievalProbe(t *testing.T) {
 	fmt.Printf("with a 步驟 section in top-%d : %d / %d\n", topK, stepHits, len(probeQueries))
 	fmt.Printf("reaching the expected area   : %d / %d\n", areaHits, areaAsked)
 	fmt.Printf("boilerplate slots of %d      : %d\n", total, boilerplate)
+	if len(shapeOrder) > 1 {
+		fmt.Printf("-- by shape --\n")
+		for _, shape := range shapeOrder {
+			s := shapes[shape]
+			fmt.Printf("%-28s : %d / %d\n", shape, s.hits, s.asked)
+		}
+	}
 	fmt.Printf("=========================\n")
 }
 

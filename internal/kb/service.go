@@ -423,17 +423,33 @@ func citationStrings(cites []Citation) []string {
 	return out
 }
 
+// composeQuery prefixes the query with session context so a follow-up like
+// "那要什麼權限?" still names the subject it is asking about.
+//
+// Only the most recent turn is used. Concatenating the whole window (the store
+// keeps five) drowned the current question: the result feeds both the BM25
+// tokens and the embedding, so three earlier questions outweigh one current
+// one. Measured over internal/kb/testdata/multiturn_probe_queries.json with
+// -tags retrievalprobe:
+//
+//	shape          whole window   last turn
+//	single-turn         8/8          8/8
+//	follow-up           2/3          3/3
+//	topic-switch        1/8          5/8
+//	pronoun             2/2          2/2
+//
+// Every topic-switch miss retrieved the *previous* topic's sections. Dropping
+// the older turns costs nothing because a pronoun refers to the turn just
+// before it, never to the one four back.
+//
+// Topic-switch is still 5/8: one off-topic question is enough to outrank a
+// self-sufficient query. Fixing that needs a "does this query stand alone?"
+// test rather than a smaller window, which is a separate, measurable change.
 func composeQuery(history []Turn, query string) string {
 	if len(history) == 0 {
 		return query
 	}
-	var b strings.Builder
-	for _, turn := range history {
-		b.WriteString(turn.Query)
-		b.WriteByte(' ')
-	}
-	b.WriteString(query)
-	return b.String()
+	return history[len(history)-1].Query + " " + query
 }
 
 // imagesOf collects the screenshot paths of the cited sections, deduplicated and

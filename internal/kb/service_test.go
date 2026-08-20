@@ -617,3 +617,48 @@ func TestServiceChatLogsEveryQuery(t *testing.T) {
 		t.Errorf("kb_query grounded = %v for an unmatched query, want false — the log is only useful if refusals are marked", got)
 	}
 }
+
+// TestComposeQuery pins the retrieval window. What gets ranked is not what the
+// caller asked, and the difference is invisible in every other test: the evals
+// and the retrieval probe ask each question in its own session, so nothing else
+// here exercises a second turn at all.
+func TestComposeQuery(t *testing.T) {
+	tests := []struct {
+		name    string
+		history []Turn
+		query   string
+		want    string
+	}{
+		{
+			name:  "first_turn_is_the_query_alone",
+			query: "如何作廢訂單?",
+			want:  "如何作廢訂單?",
+		},
+		{
+			name:    "follow_up_carries_its_subject",
+			history: []Turn{{Query: "如何作廢訂單?"}},
+			query:   "那要什麼權限?",
+			want:    "如何作廢訂單? 那要什麼權限?",
+		},
+		{
+			// The regression this window size exists to prevent: with the whole
+			// window the two older topics outranked the current question and
+			// retrieval returned their sections instead.
+			name: "older_turns_are_dropped_so_a_topic_switch_is_not_outweighed",
+			history: []Turn{
+				{Query: "折扣規則怎麼設定?"},
+				{Query: "折扣範本可以套用到哪些商品?"},
+				{Query: "折扣參數有哪些欄位?"},
+			},
+			query: "如何作廢訂單?",
+			want:  "折扣參數有哪些欄位? 如何作廢訂單?",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := composeQuery(tc.history, tc.query); got != tc.want {
+				t.Errorf("composeQuery() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
