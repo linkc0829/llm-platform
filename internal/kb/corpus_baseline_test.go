@@ -35,7 +35,7 @@ func TestCurrentCorpusClassificationBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarkdownRepo.fingerprint(current corpus) error = %v, want nil", err)
 	}
-	const expectedFingerprint = "0ff64ba696d840fcd854226a8487be15f2041cd0f9f801c7b05992dd0e192bd4"
+	const expectedFingerprint = "fbf177e686b1bdb062312e9d5bd1ddfda0a7403c5bbb295f48b84d6cd2a43928"
 	if !dryRun && fingerprint != expectedFingerprint {
 		t.Fatalf("current corpus fingerprint = %s, want %s; rerun the classification dry run before comparing counts", fingerprint, expectedFingerprint)
 	}
