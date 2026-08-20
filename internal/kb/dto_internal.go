@@ -23,12 +23,6 @@ type corpusJSON struct {
 	N       int            `json:"n"`
 }
 
-type vectorMetaJSON struct {
-	Identity string               `json:"identity"`
-	Version  int                  `json:"version"`
-	Vectors  map[string][]float32 `json:"vectors"`
-}
-
 func toSectionJSON(s Section) sectionJSON {
 	return sectionJSON{File: s.File(), Heading: s.Heading(), Anchor: s.Anchor(), Body: s.Body(), Meta: s.Meta(), Images: s.Images()}
 }

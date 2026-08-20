@@ -292,7 +292,7 @@ Not in version control — recreate with `make import` and `POST /index`:
 docs/<team>/             # imported Markdown and _assets/ screenshots
 eval/<team>/             # bundle eval YAML and kb_index.json
 .kb/index.json
-.kb/faiss_index/metadata.json
+.kb/faiss_index/vectors.bin
 ```
 
 ## Make Targets
