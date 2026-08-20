@@ -1,6 +1,6 @@
 ---
 name: ui-kb-merge-import
-description: Merge several per-source KB bundles (admin-replay / wpf-replay / pm-reference) into one staging tree and carry it through to a live corpus — copies `modules/` beside `kb/`, concatenates `eng_eval.yaml`, merges `kb_index.json` with collision checks, then `kbimport -check`, backup, `make import`, `POST /index`, and the baseline update. This is the ONLY place `make import` belongs: it replaces `docs/<team>/` and `eval/<team>/` wholesale and neither is version controlled. Use when a new KB source is added, when one source changed and the corpus must be rebuilt, or whenever someone is about to run kbimport or make import by hand. Triggers "合併 KB 來源", "併 staging", "匯入前的合併", "匯入 KB", "重新匯入 KB", "重建語料", "跑 kbimport", "make import", "更新 baseline", "merge kb sources", "staging tree", "新增第四份來源", "import kb bundle".
+description: Merge several per-source KB bundles (admin-replay / wpf-replay / pm-reference) into one staging tree and carry it through to a serving corpus, stopping at the baseline (question-answering eval belongs to ui-kb-validate) — copies `modules/` beside `kb/`, concatenates `eng_eval.yaml`, merges `kb_index.json` with collision checks, then `kbimport -check`, backup, `make import`, `POST /index`, and the baseline update. This is the ONLY place `make import` belongs: it replaces `docs/<team>/` and `eval/<team>/` wholesale and neither is version controlled. Use when a new KB source is added, when one source changed and the corpus must be rebuilt, or whenever someone is about to run kbimport or make import by hand. Triggers "合併 KB 來源", "併 staging", "匯入前的合併", "匯入 KB", "重新匯入 KB", "重建語料", "跑 kbimport", "make import", "更新 baseline", "merge kb sources", "staging tree", "新增第四份來源", "import kb bundle".
 ---
 
 # 多來源 `kb/` → staging 樹
@@ -124,12 +124,18 @@ make import TEAM=Store.POS FROM=C:/tmp/staging/kb
 
 想強制全量重算就先刪 `.kb/faiss_index/vectors.bin`。實測 1395 段:全量 54s、全命中 2.1s。
 
-### 7. 更新 baseline,跑 eval
+### 7. 更新 baseline —— **到此為止,不要在這裡跑問答 eval**
 
-baseline 的 fingerprint **一定要取 import 之後的**。import 會把圖片引用改寫成
-`_assets/...`,而 **body 正是 fingerprint 的輸入**,所以 staging 乾跑的值與 `docs/`
-的值**必然不同**(實例:staging `5116dc07…` vs `docs/` `7ed4223f…`)。段數與分類
-分布兩邊相同,只有 fingerprint 不同 —— 貼錯 baseline 永遠紅。
+baseline 的 fingerprint **一定要取 import 之後的**。`MarkdownRepo.fingerprint()`
+(`internal/kb/repo_markdown.go`)對每個 `.md` 做 `os.ReadFile` 後 sha256 ——
+**雜湊的是整個檔案,包含 front matter**,不是只有 body。所以:
+
+- import 會把圖片引用改寫成 `_assets/...`,staging 乾跑的值與 `docs/` 的值**必然不同**
+  (實例:staging `5116dc07…` vs `docs/` `7ed4223f…`)。段數與分類分布兩邊相同,
+  只有 fingerprint 不同 —— 貼錯 baseline 永遠紅。
+- **front matter 只要動一個字,fingerprint 就變。** `convert_reference_bundle.py`
+  的 `--version` 預設是**今天**,所以同一份來源隔天重跑就會產生不同的 fingerprint,
+  即使一個字的內容都沒改。要可重現就明確傳 `--version`,不要用預設值。
 
 ```powershell
 $env:KB_BASELINE_DOCS = (Resolve-Path .\docs).Path
@@ -140,8 +146,15 @@ finally { Remove-Item Env:KB_BASELINE_DOCS -ErrorAction SilentlyContinue }
 **`try/finally` 不是講究。** 環境變數留在 session 裡會讓後續 `go test ./...`
 **靜默跳過** baseline 斷言而假綠。
 
-問答驗收交給 `ui-kb-validate`(客服)與 `ui-kb-eng-validate`(工程 `search_kb`);
-後者的前提是前者已經過關。
+**baseline 綠了就結束。** 問答 eval 不屬於這支 skill —— 交給 `ui-kb-validate`
+(客服 `/chat`)與 `ui-kb-eng-validate`(工程 `search_kb`,前提是前者已過關)。
+
+> **為什麼 `/index` 在這裡、eval 不在:** `make import` 之後 `docs/` 的 fingerprint
+> 就與 `.kb/index.json` 不符,服務會**拒絕啟動**。停在 import 等於把系統留在壞掉的
+> 狀態,所以 import 與 `/index` 在實務上不可分割。baseline 同理 —— 它的取值規則
+> (見上)只有在 import 之後才成立,和它守護的那一步分開就會被貼錯。
+>
+> eval 沒有這個耦合:語料重建完就是一個可服務的系統,問答品質是另一件事。
 
 ---
 
@@ -164,7 +177,8 @@ finally { Remove-Item Env:KB_BASELINE_DOCS -ErrorAction SilentlyContinue }
 4. 備份 docs/ eval/ .kb/  ← 下一步不可逆
 5. make import
 6. POST /index           只有變動的段落重新 embed
-7. baseline + eval
+7. baseline                ← 這支 skill 到此為止
+8. 問答 eval               ui-kb-validate / ui-kb-eng-validate
 ```
 
 代價其實很低。貴的是 embedding 不是合併:上一輪 1395 段裡 674 段命中內容定址向量
