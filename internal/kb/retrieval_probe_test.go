@@ -250,6 +250,19 @@ func TestRetrievalProbe(t *testing.T) {
 				rankOf(ranked, indexed, tc.WantAnchor),
 				tc.Query, tc.WantAnchor, len(bm25List))
 		}
+		// The two numbers Service.chat denies on. They decide whether a query
+		// retrieves anything on its own, which is what any "should this turn
+		// carry context?" rule has to key off — and they were invisible here.
+		gateBM25, gateCosine := 0.0, 0.0
+		if len(bm25List) > 0 {
+			gateBM25 = bm25List[0].Score
+		}
+		if len(vecList) > 0 {
+			gateCosine = vecList[0].Score
+		}
+		t.Logf("[gate bm25=%6.2f cos=%.3f deny=%-5v] %-14s %s",
+			gateBM25, gateCosine,
+			gateBM25 < minThreshold && gateCosine < cosineMin, tc.Shape, tc.Query)
 		if len(tc.Prior) > 0 {
 			// The string that was actually ranked, not the one that was asked.
 			t.Logf("[%s] ranked %q", tc.Shape, retrievalQuery)

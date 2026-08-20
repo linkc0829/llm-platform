@@ -618,11 +618,15 @@ func TestServiceChatLogsEveryQuery(t *testing.T) {
 	}
 }
 
-// TestComposeQuery pins the retrieval window. What gets ranked is not what the
-// caller asked, and the difference is invisible in every other test: the evals
-// and the retrieval probe ask each question in its own session, so nothing else
-// here exercises a second turn at all.
+// TestComposeQuery pins what actually gets ranked, which is not what the caller
+// asked. Nothing else covers it: the evals and the retrieval probe ask each
+// question in its own session, so no other test reaches a second turn.
 func TestComposeQuery(t *testing.T) {
+	prior := []Turn{
+		{Query: "折扣規則怎麼設定?"},
+		{Query: "折扣範本可以套用到哪些商品?"},
+		{Query: "折扣參數有哪些欄位?"},
+	}
 	tests := []struct {
 		name    string
 		history []Turn
@@ -635,23 +639,26 @@ func TestComposeQuery(t *testing.T) {
 			want:  "如何作廢訂單?",
 		},
 		{
-			name:    "follow_up_carries_its_subject",
+			// The regression the marker test exists to prevent: prepending here
+			// made retrieval return the discount sections, not the void ones.
+			name:    "a_self_sufficient_query_ignores_history_entirely",
+			history: prior,
+			query:   "如何作廢訂單?",
+			want:    "如何作廢訂單?",
+		},
+		{
+			// Without the subject this asks nothing answerable, so it is the one
+			// case that must pay the dilution.
+			name:    "an_anaphoric_query_takes_the_previous_turn",
 			history: []Turn{{Query: "如何作廢訂單?"}},
 			query:   "那要什麼權限?",
 			want:    "如何作廢訂單? 那要什麼權限?",
 		},
 		{
-			// The regression this window size exists to prevent: with the whole
-			// window the two older topics outranked the current question and
-			// retrieval returned their sections instead.
-			name: "older_turns_are_dropped_so_a_topic_switch_is_not_outweighed",
-			history: []Turn{
-				{Query: "折扣規則怎麼設定?"},
-				{Query: "折扣範本可以套用到哪些商品?"},
-				{Query: "折扣參數有哪些欄位?"},
-			},
-			query: "如何作廢訂單?",
-			want:  "折扣參數有哪些欄位? 如何作廢訂單?",
+			name:    "only_the_previous_turn_is_taken_not_the_window",
+			history: prior,
+			query:   "它有哪些欄位?",
+			want:    "折扣參數有哪些欄位? 它有哪些欄位?",
 		},
 	}
 	for _, tc := range tests {

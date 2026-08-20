@@ -446,10 +446,39 @@ func citationStrings(cites []Citation) []string {
 // self-sufficient query. Fixing that needs a "does this query stand alone?"
 // test rather than a smaller window, which is a separate, measurable change.
 func composeQuery(history []Turn, query string) string {
-	if len(history) == 0 {
+	if len(history) == 0 || !needsContext(query) {
 		return query
 	}
 	return history[len(history)-1].Query + " " + query
+}
+
+// anaphoricMarkers are words whose meaning is a pointer to earlier text.
+//
+// The alternative was a score test — rank the bare query and only reach for
+// history when it retrieves nothing — but the scores do not separate the two
+// cases. Measured over the bare queries in the probe fixture, self-sufficient
+// questions scored bm25 8.11–21.20 / cosine 0.729–0.828 and context-dependent
+// ones 8.99–21.16 / 0.711–0.742: fully overlapping, and "它跟商品子體系的關係是
+// 什麼?" outscored "折扣規則怎麼設定?" on both. CJK bigrams give a pronoun
+// question plenty of content tokens; what it lacks is a subject, not vocabulary.
+//
+// So key off the words that are pointers by definition instead. A false
+// positive only costs the dilution this window already had; a false negative
+// strands a follow-up with no subject.
+var anaphoricMarkers = []string{
+	"它", "他", "她", "牠", "這", "那", "此", "該", "其",
+	"上述", "前述", "以上", "剛才", "剛剛", "呢",
+}
+
+// needsContext reports whether the query points at something it does not name,
+// and so cannot be retrieved on its own.
+func needsContext(query string) bool {
+	for _, marker := range anaphoricMarkers {
+		if strings.Contains(query, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // imagesOf collects the screenshot paths of the cited sections, deduplicated and
