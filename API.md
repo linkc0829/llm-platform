@@ -333,3 +333,101 @@ Streamable HTTP `/mcp` 上生效。
   (Unix 下權限過寬服務會警告;Windows 不檢查)
 - **改 auth 一定要停服務。** `kbtoken` 有 `/health` 探測與 lock file 兩道門
 - **token 沒有到期日。** 定期輪替要自己排;`rotate-admin` **不會**自動撤銷舊的那把
+
+---
+
+## 十、拿到 token 之後:接上 opencode
+
+opencode 透過 **MCP** 連 KB,走的是 5.3 節的 `/mcp` 端點,權限過濾與 `/chat` 完全一致。
+
+### 10.1 先決定用哪一把 token
+
+opencode 是工程用的 agent,所以要 `engineering=true`;但**不要**順手拿帶 `indexer` 的那把。
+
+```bash
+curl -X POST http://localhost:12598/admin/tokens \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"opencode","all_teams":true,"engineering":true}'
+```
+
+**一個 agent 一把 token。** 共用之後 log 裡的 `principal_id` 就分不出是誰問的,撤銷時
+也只能全部一起撤。也不要給 `indexer` —— opencode 沒有理由能重建索引。
+
+### 10.2 寫進設定檔
+
+| 位置 | 適用 |
+| :--- | :--- |
+| `~/.config/opencode/opencode.jsonc` | **全域**,所有專案都吃得到(建議放這裡) |
+| `<專案根>/opencode.json` 或 `opencode.jsonc` | 只在該專案生效 |
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": "allow",
+  "mcp": {
+    "knowledge_base": {
+      "type": "remote",
+      "url": "http://127.0.0.1:12598/mcp",
+      "enabled": true,
+      "timeout": 60000,
+      "headers": {
+        "Authorization": "Bearer kb_你的token"
+      }
+    }
+  }
+}
+```
+
+`McpRemoteConfig` 的欄位只有 `type` / `url` / `enabled` / `headers` / `oauth` / `timeout`,
+`headers` 是字串對字串。
+
+> ⏱️ **`timeout` 一定要調大。** opencode 對 MCP 請求的預設是 **5000 ms**,而 `search_kb`
+> 內含一次 LLM 呼叫,正常就要好幾秒 —— 用預設值會**穩定逾時**,看起來像 KB 壞了。
+
+> 🚨 **漏掉 `headers` 是最容易犯、也最難看出來的錯。** 服務對沒帶 token 的 `/mcp` 一律
+> 回 **401**,而 opencode 只會表現成「這個 MCP server 沒有可用的工具」——
+> **不會告訴你是認證問題**。改完設定要重啟 opencode。
+
+### 10.3 驗證
+
+先確認 token 本身有效,再去怪 opencode:
+
+```bash
+curl -X POST http://localhost:12598/mcp \
+  -H "Authorization: Bearer $OPENCODE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+回應要看得到 `search_kb`。拿到 401 就是 token 的問題,與 opencode 無關。
+
+接著在 opencode 裡問一個**只有 KB 有答案**的問題,確認它真的呼叫了 `search_kb` 而不是
+憑記憶回答。服務端 log 會有一行 `search_kb`,含 `principal_id` / `grounded` / `sources`。
+
+### 10.4 另一條路:stdio(`cmd/kbmcp`)
+
+```json
+{
+  "mcp": {
+    "knowledge_base": {
+      "type": "local",
+      "command": ["C:\\path\\to\\bin\\kbmcp.exe"],
+      "enabled": true,
+      "timeout": 60000
+    }
+  }
+}
+```
+
+> 🔓 **stdio 沒有信任邊界,不讀 token,一律全權存取** —— 看得到所有 team 的所有段落,
+> 包含 restricted。**分層過濾在這條路上完全不生效。** 要驗證分層是否正確,一定要走 remote。
+>
+> `kbmcp.exe` 直接讀 `.kb/` 的索引與向量檔,**格式改變後要重新編譯**。
+
+### 10.5 安全
+
+- `opencode.jsonc` 裡是**明文 token**。放進**專案內**就要確認它不會被 commit
+- token 沒有到期日,這個檔案等同於一把長期有效的 KB 讀取權
+- 要停用某個 agent:`DELETE /admin/tokens/:id`,**立即生效不必重啟服務**
