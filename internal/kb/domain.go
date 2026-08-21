@@ -505,6 +505,35 @@ func RankVector(indexed []Section, vecMap map[string][]float32, query []float32,
 	return ranked
 }
 
+// FuseRRF combines ranked lists by reciprocal rank fusion.
+//
+// Measured 2026-08-21, and worth knowing before touching rrfK or blaming
+// chunking for an engineering question that will not retrieve: at rrfK=60 over
+// candidateK=20, being in a second list beats any rank inside one list.
+//
+//	best a one-channel section can score : 1/(60+1)          = 0.0164
+//	worst a two-channel section can score : 1/80 + 1/80      = 0.0250
+//
+// So the fused list is really two tiers — everything both channels returned,
+// then everything else — and rank inside a channel decides nothing across that
+// line. rrfK would have to drop below 18 for a channel's top hit to outrank a
+// section both channels ranked last.
+//
+// This bites engineering questions specifically. "which API does X call" is
+// answered by a 工程對應 section holding endpoint paths and symbol names, which
+// shares almost no tokens with the question, so BM25 never returns it and the
+// vector channel is the only one that can. Four such questions were measured
+// with the vector channel ranking the answer 1, 2, 5 and 8 while fusion placed
+// it at 12, 10, 18 and 13.
+//
+// Two fixes were tried and both cost more than they returned: scoring a missing
+// channel as one place past its window fixed the tiering but reordered every
+// query and lost 5 stable support answers (315/317 -> 310/317), and widening
+// topK to 12 gained one engineering answer while a fifth question, whose
+// evidence was already inside the window at rank 8, started refusing because of
+// the four extra sections — reproducibly, across two runs. The durable fix is
+// upstream: give 工程對應 sections headings and prose BM25 can match, so the
+// section reaches both channels and this tiering never applies to it.
 func FuseRRF(lists [][]ScoredSection, rrfK int) []ScoredSection {
 	acc := map[int]float64{}
 	for _, list := range lists {
