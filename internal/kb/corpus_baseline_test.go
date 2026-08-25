@@ -35,12 +35,12 @@ func TestCurrentCorpusClassificationBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarkdownRepo.fingerprint(current corpus) error = %v, want nil", err)
 	}
-	const expectedFingerprint = "fbf177e686b1bdb062312e9d5bd1ddfda0a7403c5bbb295f48b84d6cd2a43928"
+	const expectedFingerprint = "6c3ccba86531482c982edabd0dc57a4b22d5986947c4ffbc970de47e187dd701"
 	if !dryRun && fingerprint != expectedFingerprint {
 		t.Fatalf("current corpus fingerprint = %s, want %s; rerun the classification dry run before comparing counts", fingerprint, expectedFingerprint)
 	}
-	if !dryRun && len(sections) != 1395 {
-		t.Fatalf("current corpus sections = %d, want 1395 for fingerprint %s", len(sections), fingerprint)
+	if !dryRun && len(sections) != 2099 {
+		t.Fatalf("current corpus sections = %d, want 2099 for fingerprint %s", len(sections), fingerprint)
 	}
 	if anchorVersion != 2 {
 		t.Fatalf("anchorVersion = %d, want 2 for recorded baseline", anchorVersion)
@@ -52,12 +52,12 @@ func TestCurrentCorpusClassificationBaseline(t *testing.T) {
 		content bool
 	}
 	want := map[key]int{
-		{docType: "ui_inventory"}:                            523,
+		{docType: "ui_inventory"}:                            955,
 		{docType: "reference"}:                               450,
-		{docType: "procedure"}:                               237,
-		{docType: "procedure", heading: true}:                34,
-		{docType: "procedure", heading: true, content: true}: 118,
-		{docType: "playlist"}:                                33,
+		{docType: "procedure"}:                               368,
+		{docType: "procedure", heading: true}:                113,
+		{docType: "procedure", heading: true, content: true}: 159,
+		{docType: "playlist"}:                                54,
 	}
 	got := map[key]int{}
 	tiers := map[SectionTier]int{}
