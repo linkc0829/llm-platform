@@ -61,11 +61,6 @@ type probeQuery struct {
 	// "anaphora", ...). Dilution and topic-stickiness fail differently, so one
 	// pooled hit rate would average away the only thing worth seeing.
 	Shape string `json:"shape"`
-	// Note is documentation carried in the fixture: what this case measured on
-	// the day it was written, and any trap in reading it. Declared rather than
-	// left as an unknown key so a fixture comment cannot rot into a typo that
-	// json.Unmarshal silently drops. The probe never reads it.
-	Note string `json:"note"`
 }
 
 // priorTurns adapts the probe's plain strings to what composeQuery consumes.
