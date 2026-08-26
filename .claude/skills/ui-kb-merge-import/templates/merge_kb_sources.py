@@ -23,7 +23,7 @@ import shutil
 import sys
 
 # kb/ also holds eng_eval_out*.json run artefacts, so copy by whitelist.
-KB_SUBDIRS = ("procedures", "ui_inventory", "playlists", "reference", "eval")
+KB_SUBDIRS = ("procedures", "ui_inventory", "playlists", "reference", "engineering_reference", "eval")
 
 
 def parse_args(argv):

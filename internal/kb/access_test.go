@@ -34,6 +34,13 @@ func TestClassifySectionFourCases(t *testing.T) {
 			wantTier: SectionTierRestricted,
 		},
 		{
+			name:     "engineering_reference_is_always_restricted",
+			heading:  "POS Repo Map",
+			body:     "source revision: sha256:test\nservice/api is the endpoint authority\nPATCH /v1/example",
+			docType:  "engineering_reference",
+			wantTier: SectionTierRestricted,
+		},
+		{
 			name:     "operation_heading_without_endpoint",
 			heading:  "步驟 1",
 			body:     "點擊儲存並確認成功訊息。",
@@ -67,6 +74,14 @@ func TestClassifySectionRejectsUnknownDocType(t *testing.T) {
 	section := accessTestSection(t, "說明", "一般內容", "", "Store.POS")
 	if _, err := ClassifySection(section); !errors.Is(err, ErrInvalidSectionAccess) {
 		t.Errorf("ClassifySection(%q) error = %v, want ErrInvalidSectionAccess", section.Citation(), err)
+	}
+}
+
+func TestEngineeringReferenceRequiresRestrictedMetadata(t *testing.T) {
+	section := accessTestSection(t, "POS Repo Map", "source revision: sha256:test", "engineering_reference", "Store.POS")
+	section.meta["access_level"] = "internal"
+	if _, err := ClassifySection(section); !errors.Is(err, ErrInvalidSectionAccess) {
+		t.Fatalf("ClassifySection(%q) error = %v, want ErrInvalidSectionAccess", section.Citation(), err)
 	}
 }
 
@@ -129,6 +144,7 @@ func TestClassificationBaselineDistribution(t *testing.T) {
 func TestCanSeeAppliesTeamAndTier(t *testing.T) {
 	public := accessTestSection(t, "步驟 1", "點擊儲存", "procedure", "Store.POS")
 	restricted := accessTestSection(t, "工程對應:Commands", "Verified Commands: clickCreate()", "procedure", "Store.POS")
+	engineeringReference := accessTestSection(t, "POS Repo Map", "source revision: sha256:test", "engineering_reference", "Store.POS")
 	tests := []struct {
 		name      string
 		principal shared.Principal
@@ -139,6 +155,8 @@ func TestCanSeeAppliesTeamAndTier(t *testing.T) {
 		{name: "regular_cannot_see_restricted", principal: shared.Principal{ID: "p_regular", AllTeams: true}, section: restricted, want: false},
 		{name: "engineering_sees_restricted_in_team", principal: shared.Principal{ID: "p_engineer", Teams: []string{"Store.POS"}, Engineering: true}, section: restricted, want: true},
 		{name: "engineering_wrong_team_is_denied", principal: shared.Principal{ID: "p_engineer", Teams: []string{"Other"}, Engineering: true}, section: restricted, want: false},
+		{name: "regular_cannot_see_engineering_reference", principal: shared.Principal{ID: "p_regular", AllTeams: true}, section: engineeringReference, want: false},
+		{name: "engineering_sees_engineering_reference", principal: shared.Principal{ID: "p_engineer", Teams: []string{"Store.POS"}, Engineering: true}, section: engineeringReference, want: true},
 		{name: "zero_principal_is_denied", principal: shared.Principal{}, section: public, want: false},
 		{name: "invalid_section_is_denied_even_for_full_access", principal: FullAccessPrincipal("p_full"), section: accessTestSection(t, "步驟 1", "POST /api/secret", "procedure", "Store.POS"), want: false},
 	}
@@ -292,11 +310,15 @@ func (s *Service) indexSnapshotSections() []Section {
 
 func accessTestSection(t *testing.T, heading, body, docType, team string) Section {
 	t.Helper()
+	meta := map[string]string{"doc_type": docType, "team": team}
+	if docType == "engineering_reference" {
+		meta["access_level"] = "internal-engineering"
+	}
 	section, err := NewSection(
 		"access-test.md#"+heading,
 		heading,
 		body,
-		map[string]string{"doc_type": docType, "team": team},
+		meta,
 		nil,
 	)
 	if err != nil {

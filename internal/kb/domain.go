@@ -84,11 +84,17 @@ var engineeringMarkers = []string{
 func ClassifySection(section Section) (SectionTier, error) {
 	headingRestricted := strings.Contains(section.Heading(), "工程對應")
 	contentRestricted := containsEngineeringEvidence(section.Body())
-	if contentRestricted && !headingRestricted {
+	docType := strings.TrimSpace(section.Meta()["doc_type"])
+	if docType != "engineering_reference" && contentRestricted && !headingRestricted {
 		return SectionTierInvalid, fmt.Errorf("%w: %s", ErrSectionAccessDrift, section.Citation())
 	}
 
-	switch strings.TrimSpace(section.Meta()["doc_type"]) {
+	switch docType {
+	case "engineering_reference":
+		if strings.TrimSpace(section.Meta()["access_level"]) != "internal-engineering" {
+			return SectionTierInvalid, fmt.Errorf("%w: %s engineering_reference must use internal-engineering", ErrInvalidSectionAccess, section.Citation())
+		}
+		return SectionTierRestricted, nil
 	case "ui_inventory", "playlist", "reference":
 		if headingRestricted {
 			return SectionTierInvalid, fmt.Errorf("%w: %s has engineering heading for %q", ErrInvalidSectionAccess, section.Citation(), section.Meta()["doc_type"])
@@ -213,6 +219,8 @@ func (s Section) Citation() string {
 func (s Section) EvidenceClass() string {
 	evidence := s.heading + "\n" + s.body
 	switch strings.TrimSpace(s.meta["doc_type"]) {
+	case "engineering_reference":
+		return "engineering_reference"
 	case "ui_inventory":
 		return "ui_inventory"
 	case "procedure":

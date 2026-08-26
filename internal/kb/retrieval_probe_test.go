@@ -292,11 +292,51 @@ func TestRetrievalProbe(t *testing.T) {
 }
 
 type evalProbeRow struct {
-	Question         string `json:"q"`
-	Kind             string `json:"kind"`
-	MustNotInfer     bool   `json:"mni"`
-	Grounded         bool   `json:"grounded"`
-	ExpectedSourceID string `json:"expected_source_id"`
+	Question            string   `json:"q"`
+	EngineeringQuestion string   `json:"question"`
+	Kind                string   `json:"kind"`
+	MustNotInfer        bool     `json:"mni"`
+	Grounded            bool     `json:"grounded"`
+	ExpectedSourceID    string   `json:"expected_source_id"`
+	ExpectedSource      string   `json:"expect_source"`
+	ExpectAny           []string `json:"expect_any"`
+}
+
+func (r evalProbeRow) normalize() evalProbeRow {
+	if r.Question == "" {
+		r.Question = r.EngineeringQuestion
+	}
+	if r.Kind == "must_not_infer" {
+		r.MustNotInfer = true
+	}
+	return r
+}
+
+func TestEvalProbeRowNormalizesChatAndEngineeringSchemas(t *testing.T) {
+	input := `[
+		{"q":"如何結帳?","kind":"D","mni":false,"expected_source_id":"Store.POS--ui-checkout"},
+		{"question":"點餐-列印狀態的呼叫鏈經過哪些方法?","kind":"callchain","expect_source":"Printing_Config-procedure","expect_any":["OnDisableCheckout"]},
+		{"question":"會員點數會打哪支 API?","kind":"must_not_infer"}
+	]`
+	var rows []evalProbeRow
+	if err := json.Unmarshal([]byte(input), &rows); err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+	for i := range rows {
+		rows[i] = rows[i].normalize()
+	}
+	if got := rows[0].Question; got != "如何結帳?" {
+		t.Errorf("chat question = %q", got)
+	}
+	if got := rows[1].Question; got != "點餐-列印狀態的呼叫鏈經過哪些方法?" {
+		t.Errorf("engineering question = %q", got)
+	}
+	if rows[1].ExpectedSource != "Printing_Config-procedure" || len(rows[1].ExpectAny) != 1 {
+		t.Errorf("engineering truth = source %q, symbols %v", rows[1].ExpectedSource, rows[1].ExpectAny)
+	}
+	if !rows[2].MustNotInfer {
+		t.Error("engineering must_not_infer kind was not normalized")
+	}
 }
 
 type evalProbeStat struct {
@@ -338,6 +378,17 @@ func answerRank(sections []Section, target string) int {
 	return 0
 }
 
+func answerRankAny(sections []Section, targets []string) int {
+	for i, sec := range sections {
+		for _, target := range targets {
+			if target != "" && strings.Contains(sec.Body(), target) {
+				return i + 1
+			}
+		}
+	}
+	return 0
+}
+
 func runEvalRetrievalProbe(t *testing.T, ctx context.Context, oai *OpenAIClient,
 	indexed []Section, corpus Corpus, vecMap map[string][]float32, evalPath string) {
 	b, err := os.ReadFile(evalPath)
@@ -349,7 +400,8 @@ func runEvalRetrievalProbe(t *testing.T, ctx context.Context, oai *OpenAIClient,
 		t.Fatalf("decode eval output: %v", err)
 	}
 	failed := make([]evalProbeRow, 0)
-	for _, row := range rows {
+	for _, raw := range rows {
+		row := raw.normalize()
 		if !row.MustNotInfer && !row.Grounded && row.Question != "" {
 			failed = append(failed, row)
 		}
@@ -397,9 +449,9 @@ func runEvalRetrievalProbe(t *testing.T, ctx context.Context, oai *OpenAIClient,
 		}
 
 		expectedPath := evalSourcePath(row.ExpectedSourceID)
-		if containsExpectedPath(topSections(indexed, ranked, probeFileTopK), expectedPath) {
+		if containsExpectedSource(topSections(indexed, ranked, probeFileTopK), expectedPath, row.ExpectedSource) {
 			stat.top3++
-		} else if containsExpectedPath(topSections(indexed, ranked, candidateK), expectedPath) {
+		} else if containsExpectedSource(topSections(indexed, ranked, candidateK), expectedPath, row.ExpectedSource) {
 			stat.top20++
 		} else {
 			stat.miss++
@@ -409,11 +461,19 @@ func runEvalRetrievalProbe(t *testing.T, ctx context.Context, oai *OpenAIClient,
 		if m := quotedTarget.FindStringSubmatch(row.Question); m != nil {
 			target = m[1]
 		}
-		if target == "" {
+		targets := row.ExpectAny
+		if target != "" {
+			targets = []string{target}
+		}
+		if len(targets) == 0 {
 			continue
 		}
 		stat.answerable++
-		rank := answerRank(topSections(indexed, ranked, candidateK), target)
+		rank := answerRankAny(topSections(indexed, ranked, candidateK), targets)
+		t.Logf("[kind=%s expected-file=%q file-top-%d=%v symbol-rank=%d] %s",
+			row.Kind, firstNonEmpty(expectedPath, row.ExpectedSource), probeFileTopK,
+			containsExpectedSource(topSections(indexed, ranked, probeFileTopK), expectedPath, row.ExpectedSource),
+			rank, row.Question)
 		if rank == 0 {
 			stat.answerMiss++
 			continue
@@ -450,6 +510,15 @@ func runEvalRetrievalProbe(t *testing.T, ctx context.Context, oai *OpenAIClient,
 	fmt.Printf("topK is currently %d — raising it only helps for questions already covered above.\n", topK)
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func evalSourcePath(id string) string {
 	team, rest, ok := strings.Cut(id, "--")
 	if !ok {
@@ -465,13 +534,16 @@ func evalSourcePath(id string) string {
 	return ""
 }
 
-func containsExpectedPath(sections []Section, expectedPath string) bool {
-	if expectedPath == "" {
+func containsExpectedSource(sections []Section, expectedPath, expectedFragment string) bool {
+	if expectedPath == "" && expectedFragment == "" {
 		return false
 	}
 	for _, section := range sections {
 		file := strings.ReplaceAll(section.File(), "\\", "/")
-		if file == expectedPath || strings.HasSuffix(file, "/"+expectedPath) {
+		if expectedPath != "" && (file == expectedPath || strings.HasSuffix(file, "/"+expectedPath)) {
+			return true
+		}
+		if expectedFragment != "" && strings.Contains(file, expectedFragment) {
 			return true
 		}
 	}

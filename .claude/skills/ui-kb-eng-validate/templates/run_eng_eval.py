@@ -16,6 +16,11 @@ import subprocess
 import sys
 import time
 import threading
+try:
+    import eng_scope
+except ModuleNotFoundError:  # support importlib-based callers and unit tests
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    import eng_scope
 
 # Windows console 預設 cp950。中文它編得動,編不動的是進度符號:
 # `↻`(重試)、`❌`(負例失敗) 一律 UnicodeEncodeError。於是重試一次就中斷整輪,
@@ -26,9 +31,9 @@ except Exception:
     pass
 
 # ---- config ---------------------------------------------------------------
-REPO = pathlib.Path(r"C:\Users\ken2_lin\Documents\go projects\system-design\knowledge-base-qa-bot")
-# 預設維持 wpf-replay,別的 workspace 用 --kb 指過去(硬寫路徑=驗別的 kb 要先改碼)
-DEFAULT_KB = pathlib.Path(r"C:\Protech\wpf-replay\kb")
+REPO = eng_scope.default_repo()
+DEFAULT_MANIFEST = REPO / "kb_sources.json"
+# 預設驗證 manifest 指定的 merge 後 corpus；單一 source 必須明確 --scope source。
 MCP_CMD = [str(REPO / "bin" / "kbmcp.exe")]
 # kbmcp 只讀環境變數,不會自己載 .env。runner 代為載入,否則背景執行時
 # 子程序拿不到 OPENAI_API_KEY,handshake 前就死(實測踩過)。
@@ -97,10 +102,11 @@ class MCP:
     只要有一題的生成卡住,整輪驗收就永遠跑不完也拿不到部分結果。
     """
 
-    def __init__(self, cmd, env=None):
+    def __init__(self, cmd, env=None, repo=None):
+        self.repo = pathlib.Path(repo or REPO)
         self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, text=True, encoding="utf-8", bufsize=1,
-                                  cwd=str(REPO), env=env)
+                                  cwd=str(self.repo), env=env)
         self.q = queue.Queue()
         # stderr 必須持續排空。kbmcp 每次 search_kb 都往 stderr 記一筆(query、
         # sources、strategy),接了 PIPE 卻不讀,管線緩衝區(Windows 約 4–8KB)填滿後
@@ -248,13 +254,44 @@ def judge(item, out):
     return True, hit_sym[0]
 
 
-def main(kb_dir=None, args_retries=RETRIES, pace=PACE):
-    kb_dir = pathlib.Path(kb_dir or DEFAULT_KB)
-    out_path = kb_dir / "eng_eval_out.json"
-    items = load_eval(kb_dir / "eng_eval.yaml")
-    env = child_env(ENV_FILE)
+def ensure_merged_eval(resolved):
+    """Build merged eng_eval.yaml when missing or stale relative to docs."""
+    eval_path = resolved["eval"] / "eng_eval.yaml"
+    expected = eng_scope.procedure_fingerprint(resolved["docs"])
+    actual = ""
+    if eval_path.is_file():
+        for line in eval_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("# procedure_fingerprint:"):
+                actual = line.split(":", 1)[1].strip()
+                break
+    if actual == expected:
+        return eval_path
+    import build_eng_eval
+    build_eng_eval.main(scope="merged", repo=str(resolved["repo"]),
+                        manifest=str(resolved["manifest"]), out_path=str(eval_path))
+    return eval_path
+
+
+def main(kb_dir=None, args_retries=RETRIES, pace=PACE, scope="merged",
+         repo=None, manifest=None, out_path=None):
+    if kb_dir is not None and scope == "merged":
+        # Backwards-compatible: an explicit --kb means a single-source run.
+        scope = "source"
+    resolved = eng_scope.resolve(repo=pathlib.Path(repo) if repo else None,
+                                 manifest=pathlib.Path(manifest) if manifest else None,
+                                 scope=scope,
+                                 source_kb=pathlib.Path(kb_dir) if kb_dir else None)
+    eval_path = ensure_merged_eval(resolved) if scope == "merged" else resolved["eval"] / "eng_eval.yaml"
+    if not eval_path.is_file():
+        sys.exit(f"eng_eval.yaml not found: {eval_path}")
+    kb_dir = resolved["eval"]
+    out_path = pathlib.Path(out_path) if out_path else kb_dir / "eng_eval_out.json"
+    items = load_eval(eval_path)
+    env_file = resolved["repo"] / ".env"
+    env = child_env(env_file)
+    mcp_cmd = [str(resolved["repo"] / "bin" / "kbmcp.exe")]
     try:
-        mcp = MCP(MCP_CMD, env)
+        mcp = MCP(mcp_cmd, env, resolved["repo"])
     except RuntimeError as e:
         sys.exit(f"MCP server 起不來(還沒問到任何題目,與檢索無關):\n{e}")
     results, fails, upstream = [], [], 0
@@ -277,7 +314,7 @@ def main(kb_dir=None, args_retries=RETRIES, pace=PACE):
                     # 連鎖拖垮整輪)。所以逾時後直接換掉子程序。
                     out, ok, note = {}, False, f"{e} → 逾時,已重啟 MCP 子程序後續跑"
                     mcp.close()
-                    mcp = MCP(MCP_CMD, env)
+                    mcp = MCP(mcp_cmd, env, resolved["repo"])
                 except Exception as e:
                     # 任何單題的意外都不該賠掉剩下的題目。跑不完的驗收沒有數字可看,
                     # 比一題失敗糟得多 —— 實測兩輪都是這樣停在中途的。
@@ -286,7 +323,7 @@ def main(kb_dir=None, args_retries=RETRIES, pace=PACE):
                         mcp.close()
                     except Exception:
                         pass
-                    mcp = MCP(MCP_CMD, env)
+                    mcp = MCP(mcp_cmd, env, resolved["repo"])
                 if ok or not is_transient(out) or attempts > args_retries:
                     break
                 # 上游(Gemini)暫時性錯誤。實測兩輪各有 27 / 34 題死在這件事上,
@@ -435,10 +472,17 @@ if __name__ == "__main__":
         _selftest()
     else:
         parser = argparse.ArgumentParser()
-        parser.add_argument("--kb", default=str(DEFAULT_KB), help="kb/ 目錄")
+        parser.add_argument("--scope", choices=("merged", "source"), default="merged",
+                            help="預設驗證 merge 後的 eval/<team>；source 需另帶 --kb")
+        parser.add_argument("--kb", help="scope=source 時的單一 kb/ 目錄")
+        parser.add_argument("--repo", default=str(REPO), help="KB repo 根目錄")
+        parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST), help="kb_sources.json")
+        parser.add_argument("--out", help="結果 JSON 輸出路徑")
         parser.add_argument("--retries", type=int, default=RETRIES,
                             help="單題遇到上游暫時性錯誤時的重試次數")
         parser.add_argument("--pace", type=float, default=PACE,
                             help="題與題之間的間隔秒數;0 = 不節流")
         a = parser.parse_args()
-        main(a.kb, a.retries, a.pace)
+        if a.scope == "source" and not a.kb:
+            parser.error("--scope source requires --kb")
+        main(a.kb, a.retries, a.pace, a.scope, a.repo, a.manifest, a.out)

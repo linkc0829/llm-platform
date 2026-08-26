@@ -17,12 +17,46 @@ description: Validate that a UI KB answers ENGINEERING questions correctly throu
 | 通道 | HTTP `/chat` | **MCP stdio**,多了 handshake / tool schema / stdout 純淨度 |
 | 真值來源 | 人審 | `## 工程對應` 的 **Verified** 行(已對原始碼驗證) |
 
+## 驗證範圍與 manifest
+
+這個 skill 預設驗證 merge 後的 `Store.POS`，不是任一單一 replay workspace。它會從
+repo 根目錄的 `kb_sources.json` 讀取 team 與所有來源；每一列的 root、`kb/`、
+`kb_index.json` 都必須存在，否則直接停止。merged scope 使用：
+
+```text
+docs/<team>/        ← merged procedure truth
+eval/<team>/        ← merged engineering eval/output
+kb_sources.json     ← source manifest
+```
+
+單一 WPF 或 Web bundle 只有在明確指定 `--scope source --kb <path>` 時才驗證。這能
+避免直接執行 skill 時默默只驗 `C:\Protech\wpf-replay\kb`。
+
 ## 兩個階段
 
 ### 階段一:建真值(`templates/build_eng_eval.py`)
 
-改頂端 `KB_DIR` 後執行。它從每份 `kb/procedures/<page_code>/<module_code>-procedure.md` 的
-`## 工程對應(Engineering Context)` 抽 endpoint / ViewModel / 方法名,產 `eng_eval.yaml`。
+預設直接執行：
+
+```powershell
+python templates/build_eng_eval.py
+```
+
+等價的明確寫法是：
+
+```powershell
+python templates/build_eng_eval.py --scope merged --manifest .\kb_sources.json
+```
+
+它會讀 `kb_sources.json`，從 merge 後的 `docs/<team>/procedures/...` 抽 endpoint /
+ViewModel / 方法名，並將 `eng_eval.yaml` 寫到 `eval/<team>/`。檔案會記錄 procedure
+`procedure_fingerprint`；文件變動而未重建 eval 時，實跑階段會拒絕使用舊真值。
+
+若只驗單一來源，必須明確指定：
+
+```powershell
+python templates/build_eng_eval.py --scope source --kb C:\Protech\wpf-replay\kb
+```
 
 **只認 `**Verified ...**` 開頭的行。** `Possible API/Functions` 是
 codebase-verify 之前的猜測,拿它當真值等於用幻覺驗幻覺 —— selftest 有一條專門鎖這件事。
@@ -33,7 +67,26 @@ codebase-verify 之前的猜測,拿它當真值等於用幻覺驗幻覺 —— s
 
 ### 階段二:實跑(`templates/run_eng_eval.py`)
 
-先 `go build -o bin/kbmcp.exe ./cmd/kbmcp`,改頂端 `REPO` / `KB_DIR` / `ENV_FILE`,執行。
+先 `go build -o bin/kbmcp.exe ./cmd/kbmcp`，再直接執行：
+
+```powershell
+python templates/run_eng_eval.py --pace 6 --retries 3
+```
+
+等價的明確寫法是：
+
+```powershell
+python templates/run_eng_eval.py --scope merged --manifest .\kb_sources.json --pace 6 --retries 3
+```
+
+預設會依 `kb_sources.json` 使用 merge 後的 `eval/<team>/eng_eval.yaml`；若檔案不存在
+或 procedure fingerprint 過期，runner 會先重建 merged eval。單一來源需明確指定：
+
+```powershell
+python templates/run_eng_eval.py --scope source --kb C:\Protech\wpf-replay\kb
+```
+
+可用 `--out C:\tmp\eng-eval-round1.json` 指定結果檔，避免兩輪共用 checkpoint。
 
 `kbmcp` 只讀環境變數、不自己載 `.env`,而且 `KB_INDEX_DIR` 是相對路徑。
 runner 因此代為載入 `ENV_FILE` 並以 repo 根目錄當 cwd 啟動子程序 ——
@@ -50,7 +103,7 @@ stdout 一旦被重導仍會整塊緩衝 —— 實測踩過「結果檔已經�
 這是設計,不是漏做。實務後果是:
 
 - 這份驗收**不必**設 `KB_AUTH_FILE`、不必建 token,照舊跑
-- 但 **52/52 完全證明不了分層過濾是對的**。它走的是繞過分層的那條路,
+- 但 stdio 工程驗收完全證明不了分層過濾是對的。它走的是繞過分層的那條路,
   工程內容本來就全看得到。分層要靠 `ui-kb-validate` 用
   `engineering=false` 的 token 跑 176 題才驗得到
 - 若改成打 HTTP 的 `/mcp`(而不是 stdio),就**需要**帶

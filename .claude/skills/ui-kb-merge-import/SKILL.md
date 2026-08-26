@@ -42,7 +42,8 @@ repo 根目錄,受版控:
   "sources": [
     { "name": "admin-replay", "root": "C:/Protech/admin-replay" },
     { "name": "wpf-replay",   "root": "C:/Protech/wpf-replay" },
-    { "name": "pm-reference", "root": "C:/Protech/pm-reference" }
+    { "name": "pm-reference", "root": "C:/Protech/pm-reference" },
+    { "name": "engineering-reference", "root": "C:/Protech/engineering-reference" }
   ]
 }
 ```
@@ -227,7 +228,9 @@ staged id `count == 1`、每列 `row.Team == -team`。「檔案複製了但 inde
 
 `admin-replay/kb/` 有 11 個 `eng_eval_out*.json`、`wpf-replay/kb/` 有 8 個。
 `stageBundle` 只認 `.md` / `.yaml` / `kb_index.json`,所以現在不會炸 —— 但這是巧合。
-腳本用白名單(`KB_SUBDIRS`),不整包複製。
+腳本用白名單(`KB_SUBDIRS`),不整包複製；工程 repo map／API contract 放在
+`kb/engineering_reference/`，其 `doc_type` 是 restricted-only，不能改放到 public
+`reference`。
 
 ### 6. eval 子目錄同名檔會靜默互蓋
 
