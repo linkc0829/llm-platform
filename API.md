@@ -1,6 +1,6 @@
 # KB QA Service — API 與 Token 手冊
 
-服務預設監聽 `http://localhost:12598`(`APP_PORT`)。所有回應皆為 JSON。
+服務預設監聽 `http://192.168.17.180:12598`(`APP_PORT`)。所有回應皆為 JSON。
 
 > 這份文件描述的是 `cmd/kb` 這支 HTTP 服務。批次匯入(`cmd/kbimport`)、
 > token 引導(`cmd/kbtoken`)、stdio MCP(`cmd/kbmcp`)是**獨立的本機程式**,
@@ -142,7 +142,7 @@ go build -o bin/kbtoken.exe ./cmd/kbtoken
 服務啟動後:
 
 ```bash
-curl -X POST http://localhost:12598/admin/tokens \
+curl -X POST http://192.168.17.180:12598/admin/tokens \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"eval-support","all_teams":true,"engineering":false}'
@@ -181,14 +181,14 @@ curl -X POST http://localhost:12598/admin/tokens \
 ### 4.4 列出與撤銷
 
 ```bash
-curl http://localhost:12598/admin/tokens -H "Authorization: Bearer $ADMIN_TOKEN"
+curl http://192.168.17.180:12598/admin/tokens -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 回傳陣列,每筆含 `id` / `name` / `teams` / `all_teams` / `engineering` / `indexer` /
 `admin` / `created_at`。**永遠不含 token 或 digest** —— 遺失的 token 只能撤銷重建。
 
 ```bash
-curl -X DELETE http://localhost:12598/admin/tokens/p_xxxxxxxxxxxxxxxxxxxxxx \
+curl -X DELETE http://192.168.17.180:12598/admin/tokens/p_xxxxxxxxxxxxxxxxxxxxxx \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
@@ -202,7 +202,7 @@ curl -X DELETE http://localhost:12598/admin/tokens/p_xxxxxxxxxxxxxxxxxxxxxx \
 ### 5.1 `POST /chat`
 
 ```bash
-curl -X POST http://localhost:12598/chat \
+curl -X POST http://192.168.17.180:12598/chat \
   -H "Authorization: Bearer $SUPPORT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"query":"如何作廢訂單?"}'
@@ -243,7 +243,7 @@ curl -X POST http://localhost:12598/chat \
 ### 5.2 `POST /index`
 
 ```bash
-curl -X POST http://localhost:12598/index \
+curl -X POST http://192.168.17.180:12598/index \
   -H "Authorization: Bearer $INDEXER_TOKEN"
 ```
 
@@ -345,7 +345,7 @@ opencode 透過 **MCP** 連 KB,走的是 5.3 節的 `/mcp` 端點,權限過濾�
 opencode 是工程用的 agent,所以要 `engineering=true`;但**不要**順手拿帶 `indexer` 的那把。
 
 ```bash
-curl -X POST http://localhost:12598/admin/tokens \
+curl -X POST http://192.168.17.180:12598/admin/tokens \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"opencode","all_teams":true,"engineering":true}'
@@ -394,7 +394,7 @@ curl -X POST http://localhost:12598/admin/tokens \
 先確認 token 本身有效,再去怪 opencode:
 
 ```bash
-curl -X POST http://localhost:12598/mcp \
+curl -X POST http://192.168.17.180:12598/mcp \
   -H "Authorization: Bearer $OPENCODE_TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
