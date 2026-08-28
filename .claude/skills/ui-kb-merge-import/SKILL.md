@@ -1,6 +1,6 @@
 ---
 name: ui-kb-merge-import
-description: Merge several per-source KB bundles (admin-replay / wpf-replay / pm-reference) into one staging tree and carry it through to a serving corpus, stopping at the baseline (question-answering eval belongs to ui-kb-validate) — copies `modules/` beside `kb/`, concatenates `eng_eval.yaml`, merges `kb_index.json` with collision checks, then `kbimport -check`, backup, `make import`, `POST /index`, and the baseline update. This is the ONLY place `make import` belongs: it replaces `docs/<team>/` and `eval/<team>/` wholesale and neither is version controlled. Use when a new KB source is added, when one source changed and the corpus must be rebuilt, or whenever someone is about to run kbimport or make import by hand. Triggers "合併 KB 來源", "併 staging", "匯入前的合併", "匯入 KB", "重新匯入 KB", "重建語料", "跑 kbimport", "make import", "更新 baseline", "merge kb sources", "staging tree", "新增第四份來源", "import kb bundle".
+description: Merge several per-source KB bundles (admin-replay / wpf-replay / pm-reference) into one staging tree and carry it through to a serving corpus, stopping at the baseline (question-answering eval belongs to ui-kb-validate) — copies `modules/` beside `kb/`, concatenates `eng_eval.yaml`, merges `kb_index.json` with collision checks, distils the L1 action-chain index (`make distill`, no LLM) into the staging bundle, then `kbimport -check`, backup, `make import`, `POST /index`, and the baseline update. This is the ONLY place `make import` belongs: it replaces `docs/<team>/` and `eval/<team>/` wholesale and neither is version controlled. This is also the ONLY place the L1 distillation belongs: `kbdistill` writes into the staging tree and rewrites `kb_index.json`, so a separate skill would give that tree a second owner. Use when a new KB source is added, when one source changed and the corpus must be rebuilt, or whenever someone is about to run kbimport, make import, or kbdistill by hand. Triggers "合併 KB 來源", "併 staging", "匯入前的合併", "匯入 KB", "重新匯入 KB", "重建語料", "跑 kbimport", "make import", "更新 baseline", "蒸餾", "跑 kbdistill", "make distill", "重建行為鏈索引", "merge kb sources", "staging tree", "新增第四份來源", "import kb bundle".
 ---
 
 # 多來源 `kb/` → staging 樹
@@ -90,7 +90,29 @@ python .claude/skills/ui-kb-merge-import/templates/merge_kb_sources.py --out C:/
 
 一次性合併不想動 manifest 時:`--source <root> --source <root> --team <TEAM>`。
 
-### 3. check
+### 3. 蒸餾 L1 行為鏈索引
+
+```bash
+make distill TEAM=Store.POS BUNDLE=C:/tmp/staging/kb
+```
+
+為每個 `procedure` module 產出一份 `distilled/<page>-<module>-distilled.md`(行為鏈索引),
+並把對應的 manifest row 寫回 `kb/kb_index.json`。**零 LLM** —— 只是把每步的 Gherkin
+When/Then 依序串起來,逐行保留來源 anchor 與 evidence class。
+
+檢索時 L1 只負責被命中,命中後確定性展開回它所索引的 L0 步驟段落;
+**L1 本身永遠不進 LLM context**,citation 與圖片一律來自 L0。
+
+<!-- ponytail: 這一步屬於這支 skill,不是獨立 skill —— 見下方「為什麼不拆成獨立 skill」 -->
+
+`-check` 只驗不寫。`-module <page>/<module>` 可重複,只重產指定 module
+(**此模式不會清空 `distilled/`**;全量模式則是清空後完整重建,避免 stale 檔與 manifest 不一致)。
+
+**這一步必須在 `kbimport -check` 之前。** `validateEvalIndex` 要求 `kb_index.json`
+涵蓋 staged 檔案的恰好全集 —— 蒸餾產物晚一步進來,check 就會抓到樹與 manifest 不符。
+
+
+### 4. check
 
 ```bash
 go run ./cmd/kbimport -team Store.POS -from C:/tmp/staging/kb -check
@@ -98,7 +120,7 @@ go run ./cmd/kbimport -team Store.POS -from C:/tmp/staging/kb -check
 
 **exit 0 才往下走。** 這一步不會替換 `docs/` 的內容(它只在 `docs/` 旁建暫存目錄再丟掉)。
 
-### 4. 備份 —— import **之前**,不是之後
+### 5. 備份 —— import **之前**,不是之後
 
 `docs/`、`eval/` 在 `.gitignore:47-48`,`.kb/` 也不受版控。**`make import` 無法用
 git 還原**,而 `replaceTeam`(`cmd/kbimport/main.go:94`)是整個目錄換掉,不是合併。
@@ -111,13 +133,13 @@ Copy-Item -Recurse docs, eval, .kb $bak
 
 還原:刪掉 `docs`/`eval`/`.kb`,複製回來,重啟服務(不必重跑 `/index`)。
 
-### 5. import
+### 6. import
 
 ```bash
 make import TEAM=Store.POS FROM=C:/tmp/staging/kb
 ```
 
-### 6. 重建索引
+### 7. 重建索引
 
 `POST /index`。只有 body 變動的段落會重新 embed —— 向量快取以 body 的 sha256 為 key,
 所以改檔名、改標題、調段落順序都是免費的;被刪掉的文件其向量也會一併消失
@@ -125,7 +147,7 @@ make import TEAM=Store.POS FROM=C:/tmp/staging/kb
 
 想強制全量重算就先刪 `.kb/faiss_index/vectors.bin`。實測 1395 段:全量 54s、全命中 2.1s。
 
-### 7. 更新 baseline —— **到此為止,不要在這裡跑問答 eval**
+### 8. 更新 baseline —— **到此為止,不要在這裡跑問答 eval**
 
 baseline 的 fingerprint **一定要取 import 之後的**。`MarkdownRepo.fingerprint()`
 (`internal/kb/repo_markdown.go`)對每個 `.md` 做 `os.ReadFile` 後 sha256 ——
@@ -159,6 +181,22 @@ finally { Remove-Item Env:KB_BASELINE_DOCS -ErrorAction SilentlyContinue }
 
 ---
 
+## 為什麼蒸餾不拆成獨立 skill
+
+同一個理由:**staging 樹只能有一個主人。**
+
+`kbdistill` 會寫入 `staging/kb/distilled/` 並改寫 `kb_index.json`。拆成獨立 skill
+就是讓第二支 skill 有權改動這棵樹 —— 與「`make import` 只能有一個主人」是同一類失效模式,
+而那個已經真的發生過(176 份語料被削成 22 份)。
+
+坑 #3 要求 `kb_index.json` 與實際檔案恰好一一對應。兩支 skill 分別碰它,就會出現
+「樹改了、manifest 還沒改」的時間窗,而 `-check` 只驗自洽不驗完整,不會攔下來。
+
+而且**沒有「只蒸餾不合併」的情境** —— 沒有增量匯入這件事,改一份也要全部重併。
+獨立 skill 不會有任何獨立用途,只會多一個會漂移的檔案,和一個「我要不要也跑這支」的判斷題。
+
+---
+
 ## 只更新一份來源時:**還是要全部重併,沒有例外**
 
 這不是取捨,是 `kbimport` 的行為決定的:
@@ -174,12 +212,13 @@ finally { Remove-Item Env:KB_BASELINE_DOCS -ErrorAction SilentlyContinue }
 ```
 1. 只重跑那一份的產出     ui-kb-export / ui-kb-reference-bundle
 2. 合併全部              merge_kb_sources.py        ← 一定要全部
-3. kbimport -check
-4. 備份 docs/ eval/ .kb/  ← 下一步不可逆
-5. make import
-6. POST /index           只有變動的段落重新 embed
-7. baseline                ← 這支 skill 到此為止
-8. 問答 eval               ui-kb-validate / ui-kb-eng-validate
+3. 蒸餾 L1               make distill               ← 要在 check 之前
+4. kbimport -check
+5. 備份 docs/ eval/ .kb/  ← 下一步不可逆
+6. make import
+7. POST /index           只有變動的段落重新 embed
+8. baseline                ← 這支 skill 到此為止
+9. 問答 eval               ui-kb-validate / ui-kb-eng-validate
 ```
 
 代價其實很低。貴的是 embedding 不是合併:上一輪 1395 段裡 674 段命中內容定址向量

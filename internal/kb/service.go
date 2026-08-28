@@ -44,7 +44,9 @@ const (
 	// saw it, which reads as the model refusing when it is retrieval trimming.
 	// Re-measure with `-tags retrievalprobe` after any chunking change.
 	topK       = 8
-	candidateK = 20
+	l1K        = 2
+	budget     = defaultExpansionBudget
+	candidateK = defaultCandidateK
 	rrfK       = 60
 	cosineMin  = 0.30
 )
@@ -169,40 +171,41 @@ func (s *Service) chat(ctx context.Context, principal shared.Principal, query, s
 	for len(bm25List) > 0 && bm25List[len(bm25List)-1].Score <= 0 {
 		bm25List = bm25List[:len(bm25List)-1]
 	}
-	if len(bm25List) > candidateK {
-		bm25List = bm25List[:candidateK]
-	}
-	bm25Max := 0.0
-	if len(bm25List) > 0 {
-		bm25Max = bm25List[0].Score
-	}
+
 	var vecList []ScoredSection
 	if s.embedder != nil && len(vecMap) > 0 {
 		if vectors, err := s.embedder.Embed(ctx, []string{contextualQuery}); err == nil && len(vectors) > 0 {
-			vecList = RankVector(indexed, vecMap, vectors[0], candidateK, allow)
+			vecList = RankVector(indexed, vecMap, vectors[0], len(indexed), allow)
 		}
 	}
-	bestCosine := 0.0
-	if len(vecList) > 0 {
-		bestCosine = vecList[0].Score
-	}
-	if bm25Max < minThreshold && bestCosine < cosineMin {
+
+	poolRes := PartitionAndRankPools(indexed, bm25List, vecList, topK, candidateK, rrfK, minThreshold)
+
+	if poolRes.GateBM25 < minThreshold && poolRes.GateCosine < cosineMin {
 		answer, sessionID, err := s.deny(ctx, ownerID, sessionID, query, start)
-		return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
+		return answer, sessionID, RetrievalMetrics{BM25Max: poolRes.GateBM25, BestCosine: poolRes.GateCosine}, err
 	}
-	ranked, strategy := bm25List, "markdown"
-	if len(vecList) > 0 && len(bm25List) > 0 {
-		ranked, strategy = FuseRRF([][]ScoredSection{bm25List, vecList}, rrfK), "hybrid"
-	} else if len(vecList) > 0 {
-		ranked, strategy = vecList, "vector"
+
+	expanded, err := ExpandDistilled(
+		poolRes.TopL1,
+		poolRes.TopL0,
+		indexed,
+		poolRes.RankedL0,
+		allow,
+		l1K,
+		candidateK,
+		budget,
+	)
+	if err != nil {
+		return Answer{}, sessionID, RetrievalMetrics{BM25Max: poolRes.GateBM25, BestCosine: poolRes.GateCosine}, fmt.Errorf("expand distilled: %w", err)
 	}
-	sections := topSections(indexed, ranked, topK)
-	if len(sections) == 0 {
+
+	if len(expanded) == 0 {
 		answer, sessionID, err := s.deny(ctx, ownerID, sessionID, query, start)
-		return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
+		return answer, sessionID, RetrievalMetrics{BM25Max: poolRes.GateBM25, BestCosine: poolRes.GateCosine}, err
 	}
-	answer, sessionID, err := s.answerFrom(ctx, ownerID, sessionID, query, sections, history, strategy, start)
-	return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
+	answer, sessionID, err := s.answerFrom(ctx, ownerID, sessionID, query, expanded, history, poolRes.Strategy, start)
+	return answer, sessionID, RetrievalMetrics{BM25Max: poolRes.GateBM25, BestCosine: poolRes.GateCosine}, err
 }
 
 // deny records the turn and returns the cannot-confirm answer.
@@ -335,10 +338,12 @@ func cloneVector(vector []float32) []float32 {
 // goes through here, so this is the one spot where "no section is published
 // unclassified" can be guaranteed rather than remembered.
 func (s *Service) storeIndexSnapshot(indexed []Section, corpus Corpus, vecMap map[string][]float32, ready bool) {
-	StampTiers(indexed)
+	cloned := make([]Section, len(indexed))
+	copy(cloned, indexed)
+	StampTiers(cloned)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.indexed = indexed
+	s.indexed = cloned
 	s.corpus = corpus
 	s.vecMap = vecMap
 	s.ready = ready
@@ -348,36 +353,6 @@ func (s *Service) indexSnapshot() ([]Section, Corpus, map[string][]float32, bool
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.indexed, s.corpus, s.vecMap, s.ready
-}
-
-func filterRankedSections(indexed []Section, ranked []ScoredSection, allow func(Section) bool) []ScoredSection {
-	filtered := make([]ScoredSection, 0, len(ranked))
-	for _, scored := range ranked {
-		if scored.Index < 0 || scored.Index >= len(indexed) {
-			continue
-		}
-		if allow != nil && !allow(indexed[scored.Index]) {
-			continue
-		}
-		filtered = append(filtered, scored)
-	}
-	return filtered
-}
-
-func topSections(indexed []Section, ranked []ScoredSection, k int) []Section {
-	if k > len(ranked) {
-		k = len(ranked)
-	}
-	sections := make([]Section, 0, k)
-	for _, scored := range ranked[:k] {
-		if scored.Score <= 0 {
-			continue
-		}
-		if scored.Index >= 0 && scored.Index < len(indexed) {
-			sections = append(sections, indexed[scored.Index])
-		}
-	}
-	return sections
 }
 
 func (s *Service) cannotConfirm() Answer {

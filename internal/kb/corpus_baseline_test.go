@@ -35,12 +35,12 @@ func TestCurrentCorpusClassificationBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarkdownRepo.fingerprint(current corpus) error = %v, want nil", err)
 	}
-	const expectedFingerprint = "3b017f611971611e598f62d05e396d45a99b87a619be6217e543d6c84ce7b480"
+	const expectedFingerprint = "43de814bfe3044e7194a0beb95f7a7dbb6de88c8530a611953a51f260ac57c58"
 	if !dryRun && fingerprint != expectedFingerprint {
 		t.Fatalf("current corpus fingerprint = %s, want %s; rerun the classification dry run before comparing counts", fingerprint, expectedFingerprint)
 	}
-	if !dryRun && len(sections) != 3021 {
-		t.Fatalf("current corpus sections = %d, want 3021 for fingerprint %s", len(sections), fingerprint)
+	if !dryRun && len(sections) != 3068 {
+		t.Fatalf("current corpus sections = %d, want 3068 for fingerprint %s", len(sections), fingerprint)
 	}
 	if anchorVersion != 2 {
 		t.Fatalf("anchorVersion = %d, want 2 for recorded baseline", anchorVersion)
@@ -60,6 +60,7 @@ func TestCurrentCorpusClassificationBaseline(t *testing.T) {
 		{docType: "procedure", heading: true}:                122,
 		{docType: "procedure", heading: true, content: true}: 274,
 		{docType: "playlist"}:                                54,
+		{docType: "distilled"}:                               47,
 	}
 	got := map[key]int{}
 	tiers := map[SectionTier]int{}

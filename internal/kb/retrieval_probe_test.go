@@ -17,6 +17,7 @@ package kb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -88,6 +89,18 @@ func rankOf(list []ScoredSection, indexed []Section, want string) int {
 	return 0
 }
 
+func rankOfSection(list []Section, want string) int {
+	if want == "" {
+		return 0
+	}
+	for i, s := range list {
+		if strings.Contains(s.Anchor(), want) {
+			return i + 1
+		}
+	}
+	return 0
+}
+
 func loadProbeQueries(t *testing.T) []probeQuery {
 	path := os.Getenv("KB_RETRIEVAL_PROBE_QUERIES")
 	if path == "" {
@@ -142,7 +155,14 @@ func TestRetrievalProbe(t *testing.T) {
 
 	ctx := context.Background()
 	if err := svc.LoadOnStartup(ctx); err != nil {
-		t.Fatalf("LoadOnStartup() error = %v — build the index first (make import, then POST /index)", err)
+		if errors.Is(err, ErrNotIndexed) || errors.Is(err, ErrIndexStale) {
+			t.Log("index missing or stale — running svc.Index...")
+			if _, _, err := svc.Index(ctx); err != nil {
+				t.Fatalf("svc.Index() error = %v", err)
+			}
+		} else {
+			t.Fatalf("LoadOnStartup() error = %v — build the index first (make import, then POST /index)", err)
+		}
 	}
 	indexed, corpus, vecMap, ready := svc.indexSnapshot()
 	if !ready {
@@ -183,31 +203,48 @@ func TestRetrievalProbe(t *testing.T) {
 		// Mirror Service.chat exactly: same composed query, same candidate
 		// trimming, same fusion, same k.
 		retrievalQuery := composeQuery(priorTurns(tc.Prior), tc.Query)
+		allow := func(section Section) bool {
+			return CanSee(FullAccessPrincipal(AnonymousOwner), section)
+		}
 		bm25List := corpus.RankBM25(tokenize(retrievalQuery))
+		bm25List = filterRankedSections(indexed, bm25List, allow)
 		for len(bm25List) > 0 && bm25List[len(bm25List)-1].Score <= 0 {
 			bm25List = bm25List[:len(bm25List)-1]
 		}
-		if len(bm25List) > candidateK {
-			bm25List = bm25List[:candidateK]
+		var bmL1, bmL0 []ScoredSection
+		for _, item := range bm25List {
+			if indexed[item.Index].Meta()["doc_type"] == "distilled" {
+				bmL1 = append(bmL1, item)
+			} else {
+				bmL0 = append(bmL0, item)
+			}
 		}
 		var vecList []ScoredSection
 		if vectors, err := oai.Embed(ctx, []string{retrievalQuery}); err == nil && len(vectors) > 0 {
-			vecList = RankVector(indexed, vecMap, vectors[0], candidateK, func(section Section) bool {
-				return CanSee(FullAccessPrincipal(AnonymousOwner), section)
-			})
+			vecList = RankVector(indexed, vecMap, vectors[0], len(indexed), allow)
 		} else if err != nil {
 			t.Fatalf("Embed(%q) error = %v — is the embedder reachable?", retrievalQuery, err)
 		}
-		ranked := bm25List
-		if len(vecList) > 0 && len(bm25List) > 0 {
-			ranked = FuseRRF([][]ScoredSection{bm25List, vecList}, rrfK)
-		} else if len(vecList) > 0 {
-			ranked = vecList
+
+		poolRes := PartitionAndRankPools(indexed, bm25List, vecList, topK, candidateK, rrfK, minThreshold)
+
+		expanded, err := ExpandDistilled(
+			poolRes.TopL1,
+			poolRes.TopL0,
+			indexed,
+			poolRes.RankedL0,
+			allow,
+			l1K,
+			candidateK,
+			budget,
+		)
+		if err != nil {
+			t.Fatalf("ExpandDistilled error: %v", err)
 		}
 
 		var anchors []string
 		hitStep, hitArea := false, false
-		for _, sec := range topSections(indexed, ranked, topK) {
+		for _, sec := range expanded {
 			total++
 			anchors = append(anchors, sec.Anchor())
 			if strings.Contains(sec.Anchor(), "步驟") {
@@ -243,26 +280,19 @@ func TestRetrievalProbe(t *testing.T) {
 			}
 		}
 		if tc.WantAnchor != "" {
-			// Unfused ranks: which channel is failing is invisible in the fused list.
-			t.Logf("[bm25=%-3d vec=%-3d fused=%-3d] %s  (want %q, bm25 candidates=%d)",
-				rankOf(bm25List, indexed, tc.WantAnchor),
-				rankOf(vecList, indexed, tc.WantAnchor),
-				rankOf(ranked, indexed, tc.WantAnchor),
-				tc.Query, tc.WantAnchor, len(bm25List))
+			t.Logf("[bm25=%-3d vec=%-3d l0fused=%-3d expanded=%-3d] %s  (want %q, l1 hits=%d)",
+				rankOf(poolRes.BML0, indexed, tc.WantAnchor),
+				rankOf(poolRes.VecL0, indexed, tc.WantAnchor),
+				rankOf(poolRes.RankedL0, indexed, tc.WantAnchor),
+				rankOfSection(expanded, tc.WantAnchor),
+				tc.Query, tc.WantAnchor, len(poolRes.TopL1))
 		}
 		// The two numbers Service.chat denies on. They decide whether a query
 		// retrieves anything on its own, which is what any "should this turn
 		// carry context?" rule has to key off — and they were invisible here.
-		gateBM25, gateCosine := 0.0, 0.0
-		if len(bm25List) > 0 {
-			gateBM25 = bm25List[0].Score
-		}
-		if len(vecList) > 0 {
-			gateCosine = vecList[0].Score
-		}
 		t.Logf("[gate bm25=%6.2f cos=%.3f deny=%-5v] %-14s %s",
-			gateBM25, gateCosine,
-			gateBM25 < minThreshold && gateCosine < cosineMin, tc.Shape, tc.Query)
+			poolRes.GateBM25, poolRes.GateCosine,
+			poolRes.GateBM25 < minThreshold && poolRes.GateCosine < cosineMin, tc.Shape, tc.Query)
 		if len(tc.Prior) > 0 {
 			// The string that was actually ranked, not the one that was asked.
 			t.Logf("[%s] ranked %q", tc.Shape, retrievalQuery)
@@ -289,6 +319,56 @@ func TestRetrievalProbe(t *testing.T) {
 		}
 	}
 	fmt.Printf("=========================\n")
+}
+
+func TestDistilledChatLive(t *testing.T) {
+	t.Chdir("../..")
+	cfg, err := config.LoadKB()
+	if err != nil {
+		t.Fatalf("config.LoadKB() error = %v", err)
+	}
+
+	oai := NewOpenAIClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, cfg.OpenAI.EmbedBaseURL, cfg.OpenAI.EmbedAPIKey, cfg.OpenAI.GeminiThinkingLevel, cfg.OpenAI.ChatModel, cfg.OpenAI.EmbedModel)
+	svc := NewService(NewMarkdownRepo(cfg.KB.DocsDir, cfg.KB.IndexDir), oai, oai, NewVectorRepo(cfg.KB.IndexDir), NewInProcStore(), cfg.OpenAI.EmbedModel)
+
+	ctx := context.Background()
+	if err := svc.LoadOnStartup(ctx); err != nil {
+		if errors.Is(err, ErrNotIndexed) || errors.Is(err, ErrIndexStale) {
+			t.Log("re-indexing corpus...")
+			if _, _, err := svc.Index(ctx); err != nil {
+				t.Fatalf("svc.Index() error = %v", err)
+			}
+		} else {
+			t.Fatalf("LoadOnStartup() error = %v", err)
+		}
+	}
+
+	principal := FullAccessPrincipal(AnonymousOwner)
+	queries := []string{
+		"對套餐頭點選數量增加會發生甚麼事",
+		// Notion「自然語句回歸集」那張表的全部六題，一次量完再改文件。
+		"如何暫存訂單?",
+		"如何作廢訂單?",
+		"如何重印發票?",
+		"怎麼看營業報表?",
+		"如何結帳?",
+		"今天台北天氣如何?",
+	}
+
+	for _, query := range queries {
+		answer, _, metrics, err := svc.ChatWithMetrics(ctx, principal, query, "")
+		if err != nil {
+			t.Fatalf("ChatWithMetrics(%q) error = %v", query, err)
+		}
+		t.Logf("=== QUERY: %s ===", query)
+		t.Logf("  Grounded: %v", answer.Grounded())
+		t.Logf("  Answer: %s", answer.Text())
+		t.Logf("  Sources (%d):", len(answer.Sources()))
+		for _, src := range answer.Sources() {
+			t.Logf("    - %s", src)
+		}
+		t.Logf("  Metrics: bm25Max=%.2f bestCosine=%.3f", metrics.BM25Max, metrics.BestCosine)
+	}
 }
 
 type evalProbeRow struct {

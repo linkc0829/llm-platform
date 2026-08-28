@@ -1,4 +1,4 @@
-.PHONY: help build run mcp import test test-unit test-cover lint fmt vet tidy clean hooks-install verify
+.PHONY: help build run mcp import distill test test-unit test-cover lint fmt vet tidy clean hooks-install verify
 
 # ============================================================================
 # Variables
@@ -32,6 +32,9 @@ mcp: ## Run the stdio MCP server (dev / Inspector; prefer make run)
 
 import: ## Import a team bundle: make import TEAM=X FROM=Y
 	go run ./cmd/kbimport -team $(TEAM) -from $(FROM)
+
+distill: ## Generate distilled action chains: make distill TEAM=X BUNDLE=Y
+	go run ./cmd/kbdistill -team $(TEAM) -bundle $(BUNDLE)
 
 # ============================================================================
 # Test
