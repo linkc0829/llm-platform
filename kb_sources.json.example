@@ -1,0 +1,9 @@
+{
+  "team": "<TEAM>",
+  "sources": [
+    { "name": "admin-replay",           "root": "<path>/admin-replay" },
+    { "name": "wpf-replay",             "root": "<path>/wpf-replay" },
+    { "name": "pm-reference",           "root": "<path>/pm-reference" },
+    { "name": "engineering-reference",  "root": "<path>/engineering-reference" }
+  ]
+}

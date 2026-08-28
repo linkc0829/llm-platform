@@ -34,16 +34,17 @@ description: Merge several per-source KB bundles (admin-replay / wpf-replay / pm
 
 ## 要合併哪些來源:`kb_sources.json`
 
-repo 根目錄,受版控:
+repo 根目錄,**不受版控**(內含各來源的絕對路徑,屬公司資料)。
+fresh clone 請從 `kb_sources.json.example` 複製一份再填實際路徑:
 
 ```json
 {
   "team": "Store.POS",
   "sources": [
-    { "name": "admin-replay", "root": "C:/Protech/admin-replay" },
-    { "name": "wpf-replay",   "root": "C:/Protech/wpf-replay" },
-    { "name": "pm-reference", "root": "C:/Protech/pm-reference" },
-    { "name": "engineering-reference", "root": "C:/Protech/engineering-reference" }
+    { "name": "admin-replay",          "root": "<path>/admin-replay" },
+    { "name": "wpf-replay",            "root": "<path>/wpf-replay" },
+    { "name": "pm-reference",          "root": "<path>/pm-reference" },
+    { "name": "engineering-reference", "root": "<path>/engineering-reference" }
   ]
 }
 ```
