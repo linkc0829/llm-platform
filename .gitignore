@@ -46,6 +46,11 @@ Thumbs.db
 
 docs/
 eval/
+
+# 公司語料衍生的測試資料 —— 題目與預期答案直接引用 POS 業務規則,
+# 與 docs/ 同樣不進版控。本機保留,由 bundle 重建。
+/testdata/
+/internal/kb/testdata/
 # 錨在根目錄:不加斜線會連 .claude/skills/*/templates/run_eval.py 一起擋掉
 /run_eval.py
 /eval_out.json
