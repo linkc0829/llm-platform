@@ -2,6 +2,7 @@
 
 import argparse
 import collections
+import email.utils
 import hashlib
 import json
 import os
@@ -12,12 +13,18 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
 RETRYABLE = {408, 429, 500, 502, 503, 504}
 SCORING_CONTRACT_VERSION = 2
+# Upstream quota windows refill per minute, so the 1s/2s exponential fallback
+# spends all three attempts inside the same exhausted window: a 606-question run
+# lost 30 questions that way. Honour the upstream's own hint when it sends one.
+# The cap stops one hostile or mistaken header from stalling a whole suite;
+# beyond it, skipping the question is more useful than sleeping for an hour.
+RETRY_AFTER_CAP_SECONDS = float(os.getenv("KB_EVAL_RETRY_AFTER_CAP", "120"))
 
 
 def normalized(value):
@@ -133,6 +140,32 @@ def headers(token):
     return result
 
 
+def retry_after_seconds(error):
+    """Seconds the upstream asked us to wait, or None when it did not say.
+
+    Retry-After is either a number of seconds or an HTTP-date; both forms are
+    accepted because which one an upstream sends is not ours to choose.
+    """
+    response_headers = getattr(error, "headers", None)
+    raw = response_headers.get("Retry-After") if response_headers else None
+    if not raw:
+        return None
+    raw = raw.strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        pass
+    try:
+        when = email.utils.parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return None
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+
 def ask(url, token, question, timeout, retries, backoff):
     body = json.dumps({"query": question}, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(url, body, headers(token))
@@ -145,8 +178,14 @@ def ask(url, token, question, timeout, retries, backoff):
                 raise RuntimeError(f"HTTP {error.code}: check KB_EVAL_TOKEN") from error
             if error.code not in RETRYABLE or attempt == retries:
                 raise
-            delay = backoff * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
-            print(f"retry {attempt}/{retries - 1}: HTTP {error.code}; sleep {delay:.1f}s", file=sys.stderr)
+            hint = retry_after_seconds(error)
+            if hint is not None and hint > RETRY_AFTER_CAP_SECONDS:
+                print(f"HTTP {error.code}: upstream asked for {hint:.0f}s, over the "
+                      f"{RETRY_AFTER_CAP_SECONDS:.0f}s cap; skipping this question", file=sys.stderr)
+                raise
+            delay = hint if hint is not None else backoff * (2 ** (attempt - 1)) + random.uniform(0, 0.25)
+            source = "Retry-After" if hint is not None else "backoff"
+            print(f"retry {attempt}/{retries - 1}: HTTP {error.code}; sleep {delay:.1f}s ({source})", file=sys.stderr)
             time.sleep(delay)
         except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
             if attempt == retries:
@@ -346,6 +385,19 @@ def selftest():
         assert validate_suite(suite, repo) == []
         source.write_text("changed rule\n", encoding="utf-8")
         assert any("stale" in error for error in validate_suite(suite, repo))
+    class FakeError:
+        def __init__(self, value):
+            self.headers = {"Retry-After": value} if value is not None else {}
+
+    assert retry_after_seconds(FakeError(None)) is None
+    assert retry_after_seconds(FakeError("")) is None
+    assert retry_after_seconds(FakeError("not-a-date")) is None
+    assert retry_after_seconds(FakeError(" 37 ")) == 37.0
+    assert retry_after_seconds(FakeError("-5")) == 0.0
+    future = email.utils.format_datetime(datetime.now(timezone.utc) + timedelta(seconds=45))
+    assert 30 <= retry_after_seconds(FakeError(future)) <= 60
+    past = email.utils.format_datetime(datetime.now(timezone.utc) - timedelta(seconds=45))
+    assert retry_after_seconds(FakeError(past)) == 0.0
     print("run_requirement_eval selftest: PASS")
 
 

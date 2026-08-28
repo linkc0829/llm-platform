@@ -80,11 +80,12 @@ func (h *Handler) chat(c *gin.Context) {
 	answer, sessionID, metrics, err := h.svc.ChatWithMetrics(ctx, principal, req.Query, req.SessionID)
 	if err != nil {
 		if h.logger != nil && !errors.Is(err, ErrEmptyQuery) && !errors.Is(err, ErrNotIndexed) {
-			h.logger.Error("chat failed",
+			fields := []zap.Field{
 				zap.Error(err),
 				zap.String("query", req.Query),
 				zap.String("request_id", c.GetString("request_id")),
-			)
+			}
+			h.logger.Error("chat failed", append(fields, transientFields(err)...)...)
 		}
 		writeError(c, err)
 		return
@@ -103,7 +104,40 @@ func writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "query is required"})
 	case errors.Is(err, ErrSessionOwnerMismatch):
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+	case errors.Is(err, ErrLLMRateLimited):
+		setRetryAfter(c, err)
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "upstream rate limited"})
+	case errors.Is(err, ErrLLMUnavailable):
+		setRetryAfter(c, err)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "upstream temporarily unavailable"})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+	}
+}
+
+// setRetryAfter echoes the upstream backoff hint when there is one. No header
+// is emitted otherwise; clients back off on their own schedule rather than one
+// this service invented.
+func setRetryAfter(c *gin.Context, err error) {
+	if after := RetryAfterOf(err); after != "" {
+		c.Header("Retry-After", after)
+	}
+}
+
+// transientFields records how an upstream failure was classified and what
+// backoff the upstream asked for. Whether the upstream sends Retry-After at all
+// decides which lever actually helps — honouring the hint, or lowering the
+// request rate — and two acceptance runs ended without an answer because the
+// only evidence was a retry marker on the eval runner's console, which nobody
+// captured. An empty upstream_retry_after is the finding, not a gap: it means
+// the upstream sent no hint.
+func transientFields(err error) []zap.Field {
+	var transient *LLMTransientError
+	if !errors.As(err, &transient) {
+		return nil
+	}
+	return []zap.Field{
+		zap.String("upstream_class", transient.Kind.Error()),
+		zap.String("upstream_retry_after", transient.RetryAfter),
 	}
 }
