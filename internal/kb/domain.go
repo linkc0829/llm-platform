@@ -250,16 +250,22 @@ func (s Section) EvidenceClass() string {
 	return "general"
 }
 
+var evidenceReplacer = strings.NewReplacer(
+	"**", "",
+	"：", ":",
+)
+
 func procedureEvidenceClass(text string) string {
 	// Exported procedure sections contain at most one action-evidence marker.
+	norm := evidenceReplacer.Replace(text)
 	switch {
-	case strings.Contains(text, "**動作證據**:`recorded`"):
+	case strings.Contains(norm, "動作證據:`recorded`"):
 		return "procedure"
-	case strings.Contains(text, "**動作證據**:`vision_inferred`"):
+	case strings.Contains(norm, "動作證據:`vision_inferred`"):
 		return "procedure_visual"
-	case strings.Contains(text, "**動作證據**:`recorded_unlabeled`"):
+	case strings.Contains(norm, "動作證據:`recorded_unlabeled`"):
 		return "procedure_unlabeled"
-	case strings.Contains(text, "**動作證據**:`inferred`") || strings.Contains(text, "**動作證據**:`not_attributable`"):
+	case strings.Contains(norm, "動作證據:`inferred`") || strings.Contains(norm, "動作證據:`not_attributable`"):
 		return "procedure_inferred"
 	default:
 		return "general"
