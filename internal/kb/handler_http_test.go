@@ -3,12 +3,17 @@ package kb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
+
+	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/shared"
 )
 
 type fakeHandlerService struct {
@@ -20,14 +25,16 @@ type fakeHandlerService struct {
 	chatMetrics   RetrievalMetrics
 	chatErr       error
 	chatQuery     string
+	chatOwnerID   string
 }
 
 func (f *fakeHandlerService) Index(_ context.Context) (int, int, error) {
 	return f.indexFiles, f.indexSections, f.indexErr
 }
 
-func (f *fakeHandlerService) ChatWithMetrics(_ context.Context, query, _ string) (Answer, string, RetrievalMetrics, error) {
+func (f *fakeHandlerService) ChatWithMetrics(_ context.Context, principal shared.Principal, query, _ string) (Answer, string, RetrievalMetrics, error) {
 	f.chatQuery = query
+	f.chatOwnerID = principal.ID
 	return f.chatAnswer, f.chatSessionID, f.chatMetrics, f.chatErr
 }
 
@@ -70,7 +77,7 @@ func TestHandlerChat(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := gin.New()
-			RegisterRoutes(r.Group(""), &Handler{svc: tt.svc})
+			RegisterRoutes(r.Group(""), &Handler{svc: tt.svc, principal: AnonymousPrincipal}, RouteGuards{AllowUnauthenticated: true})
 
 			req := httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
@@ -92,7 +99,7 @@ func TestHandlerIndexUsesService(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &fakeHandlerService{indexFiles: 3, indexSections: 10}
 	r := gin.New()
-	RegisterRoutes(r.Group(""), &Handler{svc: svc})
+	RegisterRoutes(r.Group(""), &Handler{svc: svc, principal: AnonymousPrincipal}, RouteGuards{AllowUnauthenticated: true})
 
 	req := httptest.NewRequest(http.MethodPost, "/index", nil)
 	w := httptest.NewRecorder()
@@ -106,6 +113,38 @@ func TestHandlerIndexUsesService(t *testing.T) {
 	}
 }
 
+// An audit failure returns a deliberately generic 500, so the log is the only
+// route by which an operator learns which section to fix. If the citation stops
+// reaching the log, /index becomes a fail-closed dead end: correct, but
+// unactionable without grepping the whole corpus by hand.
+func TestHandlerIndexLogsTheOffendingSection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	core, logs := observer.New(zap.ErrorLevel)
+	auditErr := fmt.Errorf("audit sections: %w: procedures/ADMIN/supply_period-procedure.md#步驟-1",
+		ErrSectionAccessDrift)
+	svc := &fakeHandlerService{indexErr: auditErr}
+
+	r := gin.New()
+	RegisterRoutes(r.Group(""), &Handler{svc: svc, logger: zap.New(core), principal: AnonymousPrincipal},
+		RouteGuards{AllowUnauthenticated: true})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/index", nil))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+	if strings.Contains(w.Body.String(), "supply_period") {
+		t.Errorf("response body leaks corpus structure: %s", w.Body.String())
+	}
+	entries := logs.FilterMessage("index failed").All()
+	if len(entries) != 1 {
+		t.Fatalf("index failed log entries = %d, want 1", len(entries))
+	}
+	if logged := entries[0].ContextMap()["error"]; !strings.Contains(logged.(string), "supply_period-procedure.md#步驟-1") {
+		t.Errorf("logged error = %q, want the offending citation", logged)
+	}
+}
+
 func TestWriteErrorUsesErrorSemantics(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -115,5 +154,17 @@ func TestWriteErrorUsesErrorSemantics(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("writeError(ErrEmptyQuery) status = %d body = %s, want 400", w.Code, w.Body.String())
+	}
+}
+
+func TestWriteErrorMapsSessionOwnerMismatchToForbidden(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	writeError(c, errors.Join(errors.New("wrapped"), ErrSessionOwnerMismatch))
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("writeError(ErrSessionOwnerMismatch) status = %d body = %s, want 403", w.Code, w.Body.String())
 	}
 }

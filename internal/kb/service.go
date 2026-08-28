@@ -2,6 +2,7 @@ package kb
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/shared"
 )
 
 const (
@@ -41,7 +44,9 @@ const (
 	// saw it, which reads as the model refusing when it is retrieval trimming.
 	// Re-measure with `-tags retrievalprobe` after any chunking change.
 	topK       = 8
-	candidateK = 20
+	l1K        = 2
+	budget     = defaultExpansionBudget
+	candidateK = defaultCandidateK
 	rrfK       = 60
 	cosineMin  = 0.30
 )
@@ -81,6 +86,9 @@ func (s *Service) Index(ctx context.Context) (int, int, error) {
 	if err != nil {
 		return 0, 0, fmt.Errorf("parse docs: %w", err)
 	}
+	if err := AuditSections(secs); err != nil {
+		return 0, 0, fmt.Errorf("audit sections: %w", err)
+	}
 	if err := s.sections.Save(ctx, secs); err != nil {
 		return 0, 0, fmt.Errorf("save index: %w", err)
 	}
@@ -102,18 +110,21 @@ func (s *Service) LoadOnStartup(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load index: %w", err)
 	}
+	if err := AuditSections(secs); err != nil {
+		return fmt.Errorf("%w: %w", ErrIndexAccessAuditFailed, err)
+	}
 
 	vecMap := map[string][]float32{}
 	stale := false
 	if s.vectors != nil {
-		model, loaded, err := s.vectors.Load(ctx)
+		identity, loaded, invalid, err := s.loadVectorCache(ctx)
 		if err != nil {
-			return fmt.Errorf("load vectors: %w", err)
+			return err
 		}
-		if len(loaded) > 0 && model != s.embedModel {
+		if invalid || identity != "" && identity != s.embeddingIdentity() {
 			stale = true
 		} else {
-			vecMap = loaded
+			vecMap = citationVectors(secs, loaded)
 		}
 	}
 
@@ -124,12 +135,16 @@ func (s *Service) LoadOnStartup(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) ChatWithMetrics(ctx context.Context, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
-	return s.chat(ctx, query, sessionID)
+func (s *Service) ChatWithMetrics(ctx context.Context, principal shared.Principal, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
+	return s.chat(ctx, principal, query, sessionID)
 }
 
-func (s *Service) chat(ctx context.Context, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
+func (s *Service) chat(ctx context.Context, principal shared.Principal, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
 	start := time.Now()
+	ownerID := principal.ID
+	if ownerID == "" {
+		return Answer{}, sessionID, RetrievalMetrics{}, ErrSessionOwnerRequired
+	}
 	if strings.TrimSpace(query) == "" {
 		return Answer{}, sessionID, RetrievalMetrics{}, ErrEmptyQuery
 	}
@@ -137,62 +152,73 @@ func (s *Service) chat(ctx context.Context, query, sessionID string) (Answer, st
 		sessionID = uuid.NewString()
 	}
 
+	history, err := s.history(ctx, sessionID, ownerID)
+	if err != nil {
+		return Answer{}, sessionID, RetrievalMetrics{}, fmt.Errorf("claim session: %w", err)
+	}
+
 	indexed, corpus, vecMap, ready := s.indexSnapshot()
 	if !ready {
 		return Answer{}, sessionID, RetrievalMetrics{}, ErrNotIndexed
 	}
 
-	history := s.history(ctx, sessionID)
 	contextualQuery := composeQuery(history, query)
+	allow := func(section Section) bool {
+		return CanSee(principal, section)
+	}
 	bm25List := corpus.RankBM25(tokenize(contextualQuery))
+	bm25List = filterRankedSections(indexed, bm25List, allow)
 	for len(bm25List) > 0 && bm25List[len(bm25List)-1].Score <= 0 {
 		bm25List = bm25List[:len(bm25List)-1]
 	}
-	if len(bm25List) > candidateK {
-		bm25List = bm25List[:candidateK]
-	}
-	bm25Max := 0.0
-	if len(bm25List) > 0 {
-		bm25Max = bm25List[0].Score
-	}
+
 	var vecList []ScoredSection
 	if s.embedder != nil && len(vecMap) > 0 {
 		if vectors, err := s.embedder.Embed(ctx, []string{contextualQuery}); err == nil && len(vectors) > 0 {
-			vecList = RankVector(indexed, vecMap, vectors[0], candidateK)
+			vecList = RankVector(indexed, vecMap, vectors[0], len(indexed), allow)
 		}
 	}
-	bestCosine := 0.0
-	if len(vecList) > 0 {
-		bestCosine = vecList[0].Score
+
+	poolRes := PartitionAndRankPools(indexed, bm25List, vecList, topK, candidateK, rrfK, minThreshold)
+
+	if poolRes.GateBM25 < minThreshold && poolRes.GateCosine < cosineMin {
+		answer, sessionID, err := s.deny(ctx, ownerID, sessionID, query, start)
+		return answer, sessionID, RetrievalMetrics{BM25Max: poolRes.GateBM25, BestCosine: poolRes.GateCosine}, err
 	}
-	if bm25Max < minThreshold && bestCosine < cosineMin {
-		answer, sessionID, err := s.deny(ctx, sessionID, query, start)
-		return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
+
+	expanded, err := ExpandDistilled(
+		poolRes.TopL1,
+		poolRes.TopL0,
+		indexed,
+		poolRes.RankedL0,
+		allow,
+		l1K,
+		candidateK,
+		budget,
+	)
+	if err != nil {
+		return Answer{}, sessionID, RetrievalMetrics{BM25Max: poolRes.GateBM25, BestCosine: poolRes.GateCosine}, fmt.Errorf("expand distilled: %w", err)
 	}
-	ranked, strategy := bm25List, "markdown"
-	if len(vecList) > 0 && len(bm25List) > 0 {
-		ranked, strategy = FuseRRF([][]ScoredSection{bm25List, vecList}, rrfK), "hybrid"
-	} else if len(vecList) > 0 {
-		ranked, strategy = vecList, "vector"
+
+	if len(expanded) == 0 {
+		answer, sessionID, err := s.deny(ctx, ownerID, sessionID, query, start)
+		return answer, sessionID, RetrievalMetrics{BM25Max: poolRes.GateBM25, BestCosine: poolRes.GateCosine}, err
 	}
-	sections := topSections(indexed, ranked, topK)
-	if len(sections) == 0 {
-		answer, sessionID, err := s.deny(ctx, sessionID, query, start)
-		return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
-	}
-	answer, sessionID, err := s.answerFrom(ctx, sessionID, query, sections, history, strategy, start)
-	return answer, sessionID, RetrievalMetrics{BM25Max: bm25Max, BestCosine: bestCosine}, err
+	answer, sessionID, err := s.answerFrom(ctx, ownerID, sessionID, query, expanded, history, poolRes.Strategy, start)
+	return answer, sessionID, RetrievalMetrics{BM25Max: poolRes.GateBM25, BestCosine: poolRes.GateCosine}, err
 }
 
 // deny records the turn and returns the cannot-confirm answer.
-func (s *Service) deny(ctx context.Context, sessionID, query string, start time.Time) (Answer, string, error) {
+func (s *Service) deny(ctx context.Context, ownerID, sessionID, query string, start time.Time) (Answer, string, error) {
 	answer := s.cannotConfirm()
-	s.record(ctx, sessionID, query, answer, start)
+	if err := s.record(ctx, ownerID, sessionID, query, answer, start); err != nil {
+		return Answer{}, sessionID, fmt.Errorf("record denied answer: %w", err)
+	}
 	return answer, sessionID, nil
 }
 
 // answerFrom grounds the LLM on the given sections, records the turn, and returns the answer.
-func (s *Service) answerFrom(ctx context.Context, sessionID, query string, sections []Section, history []Turn, strategy string, start time.Time) (Answer, string, error) {
+func (s *Service) answerFrom(ctx context.Context, ownerID, sessionID, query string, sections []Section, history []Turn, strategy string, start time.Time) (Answer, string, error) {
 	text, err := s.llm.Answer(ctx, query, sections, history)
 	if err != nil {
 		return Answer{}, sessionID, fmt.Errorf("llm answer: %w", err)
@@ -210,7 +236,9 @@ func (s *Service) answerFrom(ctx context.Context, sessionID, query string, secti
 		sources, images = nil, nil
 	}
 	answer := NewAnswer(text, sources, strategy, images, !ungrounded)
-	s.record(ctx, sessionID, query, answer, start)
+	if err := s.record(ctx, ownerID, sessionID, query, answer, start); err != nil {
+		return Answer{}, sessionID, fmt.Errorf("record answer: %w", err)
+	}
 	return answer, sessionID, nil
 }
 
@@ -219,28 +247,103 @@ func (s *Service) embedSections(ctx context.Context, secs []Section) (map[string
 		return map[string][]float32{}, nil
 	}
 
-	embs, err := s.embedder.Embed(ctx, bodiesOf(secs))
+	identity, cached, _, err := s.loadVectorCache(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("embed sections: %w", err)
+		return nil, err
 	}
-	if len(embs) != len(secs) {
-		return nil, fmt.Errorf("embed sections: got %d vectors, want %d", len(embs), len(secs))
+	if identity != "" && identity != s.embeddingIdentity() {
+		cached = map[string][]float32{}
 	}
 
-	vecMap := make(map[string][]float32, len(secs))
-	for i, sec := range secs {
-		vecMap[sec.Citation()] = embs[i]
+	hashVectors := make(map[string][]float32, len(secs))
+	missingHashes := make([]string, 0, len(secs))
+	missingBodies := make([]string, 0, len(secs))
+	seen := make(map[string]bool, len(secs))
+	for _, sec := range secs {
+		hash := sectionBodyHash(sec.Body())
+		if seen[hash] {
+			continue
+		}
+		seen[hash] = true
+		if vector, ok := cached[hash]; ok && len(vector) > 0 {
+			hashVectors[hash] = cloneVector(vector)
+			continue
+		}
+		missingHashes = append(missingHashes, hash)
+		missingBodies = append(missingBodies, sec.Body())
 	}
-	if err := s.vectors.Save(ctx, s.embedModel, vecMap); err != nil {
+
+	if len(missingBodies) > 0 {
+		embs, err := s.embedder.Embed(ctx, missingBodies)
+		if err != nil {
+			return nil, fmt.Errorf("embed sections: %w", err)
+		}
+		if len(embs) != len(missingBodies) {
+			return nil, fmt.Errorf("embed sections: got %d vectors, want %d", len(embs), len(missingBodies))
+		}
+		for i, vector := range embs {
+			hashVectors[missingHashes[i]] = cloneVector(vector)
+		}
+	}
+	if err := s.vectors.Save(ctx, s.embeddingIdentity(), hashVectors); err != nil {
 		return nil, fmt.Errorf("save vectors: %w", err)
 	}
-	return vecMap, nil
+	return citationVectors(secs, hashVectors), nil
 }
 
+func (s *Service) loadVectorCache(ctx context.Context) (string, map[string][]float32, bool, error) {
+	identity, vectors, err := s.vectors.Load(ctx)
+	if errors.Is(err, ErrVectorCacheFormat) {
+		return "", map[string][]float32{}, true, nil
+	}
+	if err != nil {
+		return "", nil, false, fmt.Errorf("load vectors: %w", err)
+	}
+	if vectors == nil {
+		vectors = map[string][]float32{}
+	}
+	return identity, vectors, false, nil
+}
+
+func (s *Service) embeddingIdentity() string {
+	if identifier, ok := s.embedder.(embedIdentifier); ok {
+		if identity := strings.TrimSpace(identifier.EmbedIdentity()); identity != "" {
+			return identity
+		}
+	}
+	return s.embedModel
+}
+
+func sectionBodyHash(body string) string {
+	hash := sha256.Sum256([]byte(body))
+	return fmt.Sprintf("%x", hash)
+}
+
+func citationVectors(sections []Section, hashVectors map[string][]float32) map[string][]float32 {
+	vecMap := make(map[string][]float32, len(sections))
+	for _, section := range sections {
+		if vector := hashVectors[sectionBodyHash(section.Body())]; len(vector) > 0 {
+			vecMap[section.Citation()] = cloneVector(vector)
+		}
+	}
+	return vecMap
+}
+
+func cloneVector(vector []float32) []float32 {
+	return append([]float32(nil), vector...)
+}
+
+// storeIndexSnapshot publishes a new index and takes ownership of indexed,
+// stamping each section's tier in place first. Every path that serves queries
+// goes through here, so this is the one spot where "no section is published
+// unclassified" can be guaranteed rather than remembered.
 func (s *Service) storeIndexSnapshot(indexed []Section, corpus Corpus, vecMap map[string][]float32, ready bool) {
+	cloned := make([]Section, len(indexed))
+	copy(cloned, indexed)
+	StampTiers(cloned)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.indexed = indexed
+	s.indexed = cloned
 	s.corpus = corpus
 	s.vecMap = vecMap
 	s.ready = ready
@@ -252,31 +355,15 @@ func (s *Service) indexSnapshot() ([]Section, Corpus, map[string][]float32, bool
 	return s.indexed, s.corpus, s.vecMap, s.ready
 }
 
-func topSections(indexed []Section, ranked []ScoredSection, k int) []Section {
-	if k > len(ranked) {
-		k = len(ranked)
-	}
-	sections := make([]Section, 0, k)
-	for _, scored := range ranked[:k] {
-		if scored.Score <= 0 {
-			continue
-		}
-		if scored.Index >= 0 && scored.Index < len(indexed) {
-			sections = append(sections, indexed[scored.Index])
-		}
-	}
-	return sections
-}
-
 func (s *Service) cannotConfirm() Answer {
 	return NewAnswer("I cannot confirm that from the knowledge base.", nil, "", nil, false)
 }
 
-func (s *Service) history(ctx context.Context, sessionID string) []Turn {
+func (s *Service) history(ctx context.Context, sessionID, ownerID string) ([]Turn, error) {
 	if s.sessions == nil {
-		return nil
+		return nil, nil
 	}
-	return s.sessions.Get(ctx, sessionID)
+	return s.sessions.Claim(ctx, sessionID, ownerID)
 }
 
 // record logs the answered query, then appends the turn to session history.
@@ -289,9 +376,10 @@ func (s *Service) history(ctx context.Context, sessionID string) []Turn {
 //
 // It sits before the nil-sessions guard on purpose: a caller with no session
 // store still asked something worth recording.
-func (s *Service) record(ctx context.Context, sessionID, query string, answer Answer, start time.Time) {
+func (s *Service) record(ctx context.Context, ownerID, sessionID, query string, answer Answer, start time.Time) error {
 	zap.L().Info("kb_query",
 		zap.String("q", query),
+		zap.String("owner_id", ownerID),
 		zap.String("session", sessionID),
 		zap.Duration("took", time.Since(start)),
 		zap.Bool("grounded", answer.Grounded()),
@@ -299,9 +387,12 @@ func (s *Service) record(ctx context.Context, sessionID, query string, answer An
 		zap.Strings("sources", citationStrings(answer.Sources())),
 	)
 	if s.sessions == nil {
-		return
+		return nil
 	}
-	s.sessions.Append(ctx, sessionID, Turn{Query: query, Answer: answer.Text()})
+	if err := s.sessions.Append(ctx, sessionID, ownerID, Turn{Query: query, Answer: answer.Text()}); err != nil {
+		return fmt.Errorf("append session: %w", err)
+	}
+	return nil
 }
 
 func citationStrings(cites []Citation) []string {
@@ -312,25 +403,62 @@ func citationStrings(cites []Citation) []string {
 	return out
 }
 
+// composeQuery prefixes the query with session context so a follow-up like
+// "那要什麼權限?" still names the subject it is asking about.
+//
+// Only the most recent turn is used. Concatenating the whole window (the store
+// keeps five) drowned the current question: the result feeds both the BM25
+// tokens and the embedding, so three earlier questions outweigh one current
+// one. Measured over internal/kb/testdata/multiturn_probe_queries.json with
+// -tags retrievalprobe:
+//
+//	shape          whole window   last turn
+//	single-turn         8/8          8/8
+//	follow-up           2/3          3/3
+//	topic-switch        1/8          5/8
+//	pronoun             2/2          2/2
+//
+// Every topic-switch miss retrieved the *previous* topic's sections. Dropping
+// the older turns costs nothing because a pronoun refers to the turn just
+// before it, never to the one four back.
+//
+// Topic-switch is still 5/8: one off-topic question is enough to outrank a
+// self-sufficient query. Fixing that needs a "does this query stand alone?"
+// test rather than a smaller window, which is a separate, measurable change.
 func composeQuery(history []Turn, query string) string {
-	if len(history) == 0 {
+	if len(history) == 0 || !needsContext(query) {
 		return query
 	}
-	var b strings.Builder
-	for _, turn := range history {
-		b.WriteString(turn.Query)
-		b.WriteByte(' ')
-	}
-	b.WriteString(query)
-	return b.String()
+	return history[len(history)-1].Query + " " + query
 }
 
-func bodiesOf(sections []Section) []string {
-	bodies := make([]string, 0, len(sections))
-	for _, section := range sections {
-		bodies = append(bodies, section.Body())
+// anaphoricMarkers are words whose meaning is a pointer to earlier text.
+//
+// The alternative was a score test — rank the bare query and only reach for
+// history when it retrieves nothing — but the scores do not separate the two
+// cases. Measured over the bare queries in the probe fixture, self-sufficient
+// questions scored bm25 8.11–21.20 / cosine 0.729–0.828 and context-dependent
+// ones 8.99–21.16 / 0.711–0.742: fully overlapping, and "它跟商品子體系的關係是
+// 什麼?" outscored "折扣規則怎麼設定?" on both. CJK bigrams give a pronoun
+// question plenty of content tokens; what it lacks is a subject, not vocabulary.
+//
+// So key off the words that are pointers by definition instead. A false
+// positive only costs the dilution this window already had; a false negative
+// strands a follow-up with no subject.
+var anaphoricMarkers = []string{
+	"它", "他", "她", "牠", "這", "那", "此", "該", "其",
+	"上述", "前述", "以上", "剛才", "剛剛", "呢",
+}
+
+// needsContext reports whether the query points at something it does not name,
+// and so cannot be retrieved on its own.
+func needsContext(query string) bool {
+	for _, marker := range anaphoricMarkers {
+		if strings.Contains(query, marker) {
+			return true
+		}
 	}
-	return bodies
+	return false
 }
 
 // imagesOf collects the screenshot paths of the cited sections, deduplicated and

@@ -9,10 +9,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/gin-gonic/gin"
-
 	"go.uber.org/zap"
 
+	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/auth"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/bootstrap"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/mcpserver"
@@ -32,8 +31,17 @@ func main() {
 		log.Fatalf("logger: %v", err)
 	}
 
-	// The service logs each answered query through zap's global. Without this it
-	// keeps the no-op default and the query log is silently empty.
+	// Validate the auth snapshot before constructing the service or listener.
+	// The service logs each answered query through zap's global after validation.
+	var authStore *auth.Store
+	if !cfg.Auth.Disabled {
+		authStore, err = auth.LoadFile(cfg.Auth.File, lg)
+		if err != nil {
+			log.Fatalf("auth: %v", err)
+		}
+	} else {
+		lg.Warn("authentication disabled; forcing localhost bind")
+	}
 	zap.ReplaceGlobals(lg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -42,29 +50,43 @@ func main() {
 	if strings.EqualFold(cfg.OpenAI.LLMMode, "fake") {
 		lg.Warn("using fake LLM mode; responses are deterministic and do not call OpenAI")
 	}
-	svc := bootstrap.NewKBService(cfg)
+	services := bootstrap.NewServices(cfg, authStore)
+	svc := services.KB
 	if err := svc.LoadOnStartup(ctx); err != nil {
 		switch {
 		case errors.Is(err, kb.ErrNotIndexed):
 			lg.Warn("knowledge base not indexed yet; POST /index to build it")
 		case errors.Is(err, kb.ErrIndexStale):
 			lg.Warn("index is stale; POST /index to rebuild it")
+		case errors.Is(err, kb.ErrIndexAccessAuditFailed):
+			lg.Warn("persisted index failed access audit; POST /index to rebuild it")
 		case errors.Is(err, kb.ErrVectorsIgnored):
 			lg.Warn("vector index is stale; POST /index to rebuild it")
 		default:
 			lg.Sugar().Fatalf("load index: %v", err)
 		}
 	}
-	h := kb.NewHandler(svc, lg)
+	h := kb.NewHandler(svc, lg, httpPrincipalProvider(cfg))
+
+	routeGuards := kb.RouteGuards{AllowUnauthenticated: cfg.Auth.Disabled}
+	if !cfg.Auth.Disabled {
+		routeGuards = kb.RouteGuards{
+			Authenticate:   auth.RequirePrincipal(services.Auth),
+			RequireIndexer: auth.RequireIndexer(),
+		}
+	}
 
 	engine := httpserver.New(lg)
-	kb.RegisterRoutes(engine.Group(""), h)
-	mcpHandler := mcpserver.NewStreamableHTTPHandler(svc, lg)
-	engine.GET("/mcp", gin.WrapH(mcpHandler))
-	engine.POST("/mcp", gin.WrapH(mcpHandler))
-	engine.DELETE("/mcp", gin.WrapH(mcpHandler))
+	kb.RegisterRoutes(engine.Group(""), h, routeGuards)
+	if !cfg.Auth.Disabled {
+		auth.RegisterTokenRoutes(engine.Group(""), auth.NewHandler(services.Auth, auth.PrincipalIDFromContext), auth.TokenRouteGuards{
+			Authenticate: auth.RequirePrincipal(services.Auth),
+			RequireAdmin: auth.RequireAdmin(),
+		})
+	}
+	mcpserver.RegisterStreamableHTTPRoutes(engine, svc, lg, cfg.Auth.Disabled, services.Auth)
 
-	srv := httpserver.Wrap(engine, httpserver.Config{Port: cfg.HTTP.Port}, lg)
+	srv := httpserver.Wrap(engine, httpserver.Config{Port: cfg.HTTP.Port, BindAddress: httpBindAddress(cfg)}, lg)
 
 	errs := make(chan error, 1)
 	go func() {

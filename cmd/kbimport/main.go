@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
+	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/atomicfile"
 )
 
 type options struct {
@@ -239,29 +239,10 @@ func validateEvalIndex(eval string, ids map[string]bool, team string) error {
 	})
 }
 
-// renameBackoff is the retry schedule for a directory rename. Windows briefly
-// holds a handle on a just-written directory (Defender / Search Indexer scanning
-// the freshly staged screenshots), so the swap-into-place rename fails with
-// "Access is denied" on the first try and succeeds moments later — observed
-// 5/5 first-try failures against docs/Store.POS. A short backoff clears it.
-var renameBackoff = []time.Duration{
-	20 * time.Millisecond, 50 * time.Millisecond,
-	100 * time.Millisecond, 250 * time.Millisecond,
-}
-
-// renameRetry is os.Rename with the backoff above. A rename that keeps failing
-// past the schedule still returns its error, so a genuine permission problem is
-// not masked, only a transient lock is ridden out.
+// renameRetry keeps the importer call sites and tests small while sharing the
+// platform-wide Windows rename retry with auth persistence.
 func renameRetry(oldpath, newpath string) error {
-	err := os.Rename(oldpath, newpath)
-	for _, d := range renameBackoff {
-		if err == nil {
-			return nil
-		}
-		time.Sleep(d)
-		err = os.Rename(oldpath, newpath)
-	}
-	return err
+	return atomicfile.RenameRetry(oldpath, newpath)
 }
 
 func replaceTeam(stageDocs, stageEval, docsTarget, evalTarget string) error {

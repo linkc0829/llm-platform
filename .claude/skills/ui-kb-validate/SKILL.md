@@ -42,10 +42,55 @@ KB 答不出問題時,失敗一定屬於其中一層。診斷錯層就會修錯�
 前置(依 KB 服務 README):
 
 ```powershell
-make import TEAM=<Team> FROM=<replay_dir>\kb   # 匯入(交易式,會取代同 team 舊資料)
+# 匯入交給 ui-kb-merge-import —— 不要在這裡直接 make import,原因見下方警告
+$env:KB_AUTH_FILE = "auth.json"                 # 服務會 fail closed,沒設就不啟動
 make run                                        # 重新編譯並啟動服務(見下方警告)
-Invoke-RestMethod -Method Post http://localhost:8080/index   # 重建索引
+# 重建索引要 indexer token(見下方「服務有 auth」)
 ```
+
+> 🚨 **不要用 `FROM=<replay_dir>\kb` 匯入單一來源。** `make import` 的 `replaceTeam`
+> 把 `docs/<team>/` **整個換掉**,所以只餵一份來源等於把同 team 的其他來源從語料裡
+> 刪除 —— 而且 `kbimport -check` **會全綠**(它驗的是「這棵樹自洽」,不是「這棵樹
+> 完整」),`docs/` 又不受版控。這條指令在只有單一 replay 來源的年代是對的;
+> 現在 `Store.POS` 由 admin-replay + wpf-replay + pm-reference 三份組成。
+>
+> 匯入(含合併、備份、`-check`、`/index`、baseline)一律走 `ui-kb-merge-import`。
+
+> ⚠️ **服務有 auth:沒帶 token 的驗收會是 0 分,而且看起來像服務壞了。**
+>
+> `/chat` 要 bearer token,`401` 不在可重試狀態裡,所以整批**快速失敗**——
+> console 只會刷一排 HTTP 401,不會有「你忘了帶 token」這種提示。
+>
+> `run_eval.py` 讀兩個環境變數,不必改這份受版控的樣板:
+>
+> ```powershell
+> $env:KB_EVAL_DIR   = "<replay_dir>\kb\eval"   # 取代樣板裡的 EVAL_DIR 佔位符
+> $env:KB_EVAL_TOKEN = "kb_..."                 # 不設就不帶 header
+> ```
+>
+> **要用哪一種 token,決定了你在量什麼:**
+>
+> | token | 量到的東西 |
+> | --- | --- |
+> | `all_teams=true, engineering=false`(客服/PM) | **這才是 176 題該用的。** 操作題在分層過濾後仍答得出來 |
+> | `engineering=true` | 只證明資料還在,**繞過了分層**,測不到過濾有沒有做壞 |
+> | 不帶 | 全部 401 |
+>
+> 首次要先 bootstrap 一把 admin,再用它建驗收用的 token:
+>
+> ```powershell
+> go build -o bin\kbtoken.exe .\cmd\kbtoken
+> .\bin\kbtoken.exe create-admin -name admin      # 明文只印這一次
+> # 服務啟動後,用 admin token 建 support 與 indexer 兩把
+> # POST /admin/tokens  {"name":"eval-support","all_teams":true,"engineering":false}
+> # POST /admin/tokens  {"name":"eval-indexer","all_teams":true,"indexer":true}
+> # POST /index         需要 indexer token
+> ```
+>
+> `kbtoken` 需要服務停止(有 lock file 與 `/health` 守門)。
+>
+> 埠號跟著 `.env` 的 `APP_PORT` 走(實測是 `12598`,不是 8080)——
+> 打錯埠拿到的是 curl exit 7,不是 404,很容易誤判成服務沒起來。
 
 > ⚠️ **每次驗證都必須重新編譯並重啟服務,舊行程不算數。**
 >
@@ -63,7 +108,8 @@ Invoke-RestMethod -Method Post http://localhost:8080/index   # 重建索引
 > (Get-Item kb.exe).LastWriteTime      # 應晚於 internal/kb/*.go 的修改時間
 > ```
 >
-> 只改 `kb/` 資料(重新 export)時不必重編,但**要重跑 `make import` + `POST /index`**;
+> 只改 `kb/` 資料(重新 export)時不必重編,但**要重跑一次完整匯入**
+> (`ui-kb-merge-import`:重併全部來源 → check → import → `/index`);
 > 只改 Go 程式碼時不必重新 import,但**一定要重編並重啟**。兩者都改就兩者都做。
 
 複製 `templates/run_eval.py`,填 `EVAL_DIR`(= `eval/<Team>/`),執行。它做四件事:

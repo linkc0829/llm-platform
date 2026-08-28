@@ -18,6 +18,7 @@ type OpenAIClient struct {
 	embedClient         openai.Client
 	chatModel           openai.ChatModel
 	embedModel          openai.EmbeddingModel
+	embedBaseURL        string
 	geminiThinkingLevel string
 }
 
@@ -34,8 +35,13 @@ func NewOpenAIClient(apiKey, baseURL, embedBaseURL, embedAPIKey, geminiThinkingL
 		embedClient:         openai.NewClient(openAIOptions(embedAPIKey, embedBaseURL)...),
 		chatModel:           openai.ChatModel(chatModel),
 		embedModel:          openai.EmbeddingModel(embedModel),
+		embedBaseURL:        embedBaseURL,
 		geminiThinkingLevel: geminiThinkingLevel,
 	}
+}
+
+func (o *OpenAIClient) EmbedIdentity() string {
+	return string(o.embedModel) + "@" + o.embedBaseURL
 }
 
 func openAIOptions(apiKey, baseURL string) []option.RequestOption {

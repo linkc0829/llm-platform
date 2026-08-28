@@ -1,0 +1,311 @@
+---
+name: ui-kb-merge-import
+description: Merge several per-source KB bundles (admin-replay / wpf-replay / pm-reference) into one staging tree and carry it through to a serving corpus, stopping at the baseline (question-answering eval belongs to ui-kb-validate) — copies `modules/` beside `kb/`, concatenates `eng_eval.yaml`, merges `kb_index.json` with collision checks, distils the L1 action-chain index (`make distill`, no LLM) into the staging bundle, then `kbimport -check`, backup, `make import`, `POST /index`, and the baseline update. This is the ONLY place `make import` belongs: it replaces `docs/<team>/` and `eval/<team>/` wholesale and neither is version controlled. This is also the ONLY place the L1 distillation belongs: `kbdistill` writes into the staging tree and rewrites `kb_index.json`, so a separate skill would give that tree a second owner. Use when a new KB source is added, when one source changed and the corpus must be rebuilt, or whenever someone is about to run kbimport, make import, or kbdistill by hand. Triggers "合併 KB 來源", "併 staging", "匯入前的合併", "匯入 KB", "重新匯入 KB", "重建語料", "跑 kbimport", "make import", "更新 baseline", "蒸餾", "跑 kbdistill", "make distill", "重建行為鏈索引", "merge kb sources", "staging tree", "新增第四份來源", "import kb bundle".
+---
+
+# 多來源 `kb/` → staging 樹
+
+匯入鏈上的第三段。前兩段各自把一份來源變成 `kb/` bundle,這一段把它們併成
+`kbimport` 吃得下的**一棵**樹:
+
+| 階段 | 工具 |
+| :--- | :--- |
+| replay workspace → `kb/` | `ui-kb-export` + `export_kb.py` |
+| 手寫 md → `kb/` | `ui-kb-reference-bundle` + `convert_reference_bundle.py` |
+| **多份 `kb/` → staging** | **這支** |
+| staging → `docs/` | `cmd/kbimport` |
+
+看起來只是 `cp -r`,但有八個安靜的失敗模式,其中兩個已經真的踩過。
+
+## 這一段幾乎全是決定性的
+
+專案 Rule 5 ——「If code can answer, code answers」。和 `ui-kb-reference-bundle`
+剛好相反:那支一半靠判斷,這支**幾乎沒有判斷**,所以腳本重、這份文件輕。
+
+| 工作 | 誰做 |
+| :--- | :--- |
+| 複製 `modules/`、白名單複製 `kb/` 子目錄、串接 `eng_eval.yaml`、合併 `kb_index.json` | 腳本 |
+| 所有碰撞 / team 不一致 / 檔案缺漏的偵測 | 腳本 |
+| 決定「這批來源該不該併在一起」 | 你 |
+| 看 `-check` 失敗訊息判斷是修來源還是修合併 | 你 |
+
+腳本**不跑** `kbimport -check`,只在結尾印出該跑的那行 —— check 會在 `docs/` 旁建
+暫存目錄,不該藏在合併腳本裡。
+
+## 要合併哪些來源:`kb_sources.json`
+
+repo 根目錄,**不受版控**(內含各來源的絕對路徑,屬公司資料)。
+fresh clone 請從 `kb_sources.json.example` 複製一份再填實際路徑:
+
+```json
+{
+  "team": "Store.POS",
+  "sources": [
+    { "name": "admin-replay",          "root": "<path>/admin-replay" },
+    { "name": "wpf-replay",            "root": "<path>/wpf-replay" },
+    { "name": "pm-reference",          "root": "<path>/pm-reference" },
+    { "name": "engineering-reference", "root": "<path>/engineering-reference" }
+  ]
+}
+```
+
+`root` 是**來源根目錄**(內含 `kb/`,可選 `modules/`),**不是 `kb/` 本身** ——
+`modules/` 是 `kb/` 的兄弟,腳本兩個都要看得到。指錯一層腳本會告訴你。
+
+**加第四份來源 = 在這裡加一列**,指令不變。這份清單該進版控的理由:「這個 team 的
+語料由哪幾份來源組成」是會被 review 的事實,不是暫存狀態。而且在此之前,這份清單
+只存在人的記憶裡。
+
+用**正斜線**。JSON 裡的反斜線要寫成 `\\`,而寫成單一個 `"C:\temp\x"` 時 `\t` 是
+**合法的 JSON 跳脫**,會靜默變成 tab 字元 —— 所以腳本的錯誤訊息一律印 `repr`。
+相對路徑一律相對於 **manifest 所在目錄**,不是 cwd。
+
+## 流程
+
+### 1. 先看一眼
+
+```bash
+python .claude/skills/ui-kb-merge-import/templates/merge_kb_sources.py --report-only
+```
+
+跑完所有檢查但不寫檔:
+
+```
+3 sources -> (report only, nothing written)
+  admin-replay    113 docs   modules: ADMIN      C:\Protech\admin-replay
+  wpf-replay       41 docs   modules: POS        C:\Protech\wpf-replay
+  pm-reference     22 docs   modules: -          C:\Protech\pm-reference
+176 docs, 203 files, 0 collisions, team Store.POS
+```
+
+**逐列核對 doc 數與絕對路徑。** 這是唯一能抓到「指到同一份來源的舊複本」的機會 ——
+路徑合法、內容自洽,腳本看不出來,只有你記得那份應該是 41 份不是 38 份。
+
+### 2. 產出
+
+```bash
+python .claude/skills/ui-kb-merge-import/templates/merge_kb_sources.py --out C:/tmp/staging
+```
+
+`--out` 必須是空的或不存在(`--force` 才會先砍掉重建)。**每次合併都用一棵全新的樹。**
+
+一次性合併不想動 manifest 時:`--source <root> --source <root> --team <TEAM>`。
+
+### 3. 蒸餾 L1 行為鏈索引
+
+```bash
+make distill TEAM=Store.POS BUNDLE=C:/tmp/staging/kb
+```
+
+為每個 `procedure` module 產出一份 `distilled/<page>-<module>-distilled.md`(行為鏈索引),
+並把對應的 manifest row 寫回 `kb/kb_index.json`。**零 LLM** —— 只是把每步的 Gherkin
+When/Then 依序串起來,逐行保留來源 anchor 與 evidence class。
+
+檢索時 L1 只負責被命中,命中後確定性展開回它所索引的 L0 步驟段落;
+**L1 本身永遠不進 LLM context**,citation 與圖片一律來自 L0。
+
+<!-- ponytail: 這一步屬於這支 skill,不是獨立 skill —— 見下方「為什麼不拆成獨立 skill」 -->
+
+`-check` 只驗不寫。`-module <page>/<module>` 可重複,只重產指定 module
+(**此模式不會清空 `distilled/`**;全量模式則是清空後完整重建,避免 stale 檔與 manifest 不一致)。
+
+**這一步必須在 `kbimport -check` 之前。** `validateEvalIndex` 要求 `kb_index.json`
+涵蓋 staged 檔案的恰好全集 —— 蒸餾產物晚一步進來,check 就會抓到樹與 manifest 不符。
+
+
+### 4. check
+
+```bash
+go run ./cmd/kbimport -team Store.POS -from C:/tmp/staging/kb -check
+```
+
+**exit 0 才往下走。** 這一步不會替換 `docs/` 的內容(它只在 `docs/` 旁建暫存目錄再丟掉)。
+
+### 5. 備份 —— import **之前**,不是之後
+
+`docs/`、`eval/` 在 `.gitignore:47-48`,`.kb/` 也不受版控。**`make import` 無法用
+git 還原**,而 `replaceTeam`(`cmd/kbimport/main.go:94`)是整個目錄換掉,不是合併。
+
+```powershell
+$bak = "C:\Protech\_kb-backup-$(Get-Date -Format yyyyMMdd-HHmmss)"
+New-Item -ItemType Directory -Force $bak | Out-Null
+Copy-Item -Recurse docs, eval, .kb $bak
+```
+
+還原:刪掉 `docs`/`eval`/`.kb`,複製回來,重啟服務(不必重跑 `/index`)。
+
+### 6. import
+
+```bash
+make import TEAM=Store.POS FROM=C:/tmp/staging/kb
+```
+
+### 7. 重建索引
+
+`POST /index`。只有 body 變動的段落會重新 embed —— 向量快取以 body 的 sha256 為 key,
+所以改檔名、改標題、調段落順序都是免費的;被刪掉的文件其向量也會一併消失
+(`embedSections` 是從當前語料重建 map,不是往舊快取追加)。
+
+想強制全量重算就先刪 `.kb/faiss_index/vectors.bin`。實測 1395 段:全量 54s、全命中 2.1s。
+
+### 8. 更新 baseline —— **到此為止,不要在這裡跑問答 eval**
+
+baseline 的 fingerprint **一定要取 import 之後的**。`MarkdownRepo.fingerprint()`
+(`internal/kb/repo_markdown.go`)對每個 `.md` 做 `os.ReadFile` 後 sha256 ——
+**雜湊的是整個檔案,包含 front matter**,不是只有 body。所以:
+
+- import 會把圖片引用改寫成 `_assets/...`,staging 乾跑的值與 `docs/` 的值**必然不同**
+  (實例:staging `5116dc07…` vs `docs/` `7ed4223f…`)。段數與分類分布兩邊相同,
+  只有 fingerprint 不同 —— 貼錯 baseline 永遠紅。
+- **front matter 只要動一個字,fingerprint 就變。** `convert_reference_bundle.py`
+  的 `--version` 預設是**今天**,所以同一份來源隔天重跑就會產生不同的 fingerprint,
+  即使一個字的內容都沒改。要可重現就明確傳 `--version`,不要用預設值。
+
+```powershell
+$env:KB_BASELINE_DOCS = (Resolve-Path .\docs).Path
+try { go test ./internal/kb -run TestCurrentCorpusClassificationBaseline -v }
+finally { Remove-Item Env:KB_BASELINE_DOCS -ErrorAction SilentlyContinue }
+```
+
+**`try/finally` 不是講究。** 環境變數留在 session 裡會讓後續 `go test ./...`
+**靜默跳過** baseline 斷言而假綠。
+
+**baseline 綠了就結束。** 問答 eval 不屬於這支 skill —— 交給 `ui-kb-validate`
+(客服 `/chat`)與 `ui-kb-eng-validate`(工程 `search_kb`,前提是前者已過關)。
+
+> **為什麼 `/index` 在這裡、eval 不在:** `make import` 之後 `docs/` 的 fingerprint
+> 就與 `.kb/index.json` 不符,服務會**拒絕啟動**。停在 import 等於把系統留在壞掉的
+> 狀態,所以 import 與 `/index` 在實務上不可分割。baseline 同理 —— 它的取值規則
+> (見上)只有在 import 之後才成立,和它守護的那一步分開就會被貼錯。
+>
+> eval 沒有這個耦合:語料重建完就是一個可服務的系統,問答品質是另一件事。
+
+---
+
+## 為什麼蒸餾不拆成獨立 skill
+
+同一個理由:**staging 樹只能有一個主人。**
+
+`kbdistill` 會寫入 `staging/kb/distilled/` 並改寫 `kb_index.json`。拆成獨立 skill
+就是讓第二支 skill 有權改動這棵樹 —— 與「`make import` 只能有一個主人」是同一類失效模式,
+而那個已經真的發生過(176 份語料被削成 22 份)。
+
+坑 #3 要求 `kb_index.json` 與實際檔案恰好一一對應。兩支 skill 分別碰它,就會出現
+「樹改了、manifest 還沒改」的時間窗,而 `-check` 只驗自洽不驗完整,不會攔下來。
+
+而且**沒有「只蒸餾不合併」的情境** —— 沒有增量匯入這件事,改一份也要全部重併。
+獨立 skill 不會有任何獨立用途,只會多一個會漂移的檔案,和一個「我要不要也跑這支」的判斷題。
+
+---
+
+## 只更新一份來源時:**還是要全部重併,沒有例外**
+
+這不是取捨,是 `kbimport` 的行為決定的:
+
+- `replaceTeam`(`cmd/kbimport/main.go:94`)把 `docs/<team>/` 與 `eval/<team>/`
+  **整個換成** `-from` 的內容。沒有增量模式。
+- `validateEvalIndex`(`main.go:204`)要求 `kb_index.json` 涵蓋 staged 檔案的
+  **恰好全集**(每個 id `count == 1`)。
+
+所以 `-from` 只餵一份來源 = **把另外兩份從 `docs/` 刪掉**,而且 **`-check` 會全綠** ——
+它驗的是「這棵樹自洽」,不是「這棵樹完整」。
+
+```
+1. 只重跑那一份的產出     ui-kb-export / ui-kb-reference-bundle
+2. 合併全部              merge_kb_sources.py        ← 一定要全部
+3. 蒸餾 L1               make distill               ← 要在 check 之前
+4. kbimport -check
+5. 備份 docs/ eval/ .kb/  ← 下一步不可逆
+6. make import
+7. POST /index           只有變動的段落重新 embed
+8. baseline                ← 這支 skill 到此為止
+9. 問答 eval               ui-kb-validate / ui-kb-eng-validate
+```
+
+代價其實很低。貴的是 embedding 不是合併:上一輪 1395 段裡 674 段命中內容定址向量
+快取,整個 `/index` 只花 35.8s。
+
+---
+
+## 八個安靜的坑
+
+### 1. `modules/` 必須是 `kb/` 的兄弟
+
+`stageBundle` 設 `bundleRoot := filepath.Dir(from)`,`stageMarkdown` 再用
+`within(bundleRoot, asset)` 檢查每個圖片(`cmd/kbimport/main.go`)。
+`-from staging/kb` → `bundleRoot = staging`,所以 md 裡的
+`../../../modules/ADMIN/...` 只有在 `staging/modules/ADMIN/...` 存在時才過。
+
+只併 `kb/` 的下場(實測):
+
+```
+kbimport: .../procedures/ADMIN/account_permission-procedure.md:
+  image "../../../modules/ADMIN/.../S01-account_list.jpg": ... cannot find the path
+```
+
+這個坑會**大聲**失敗,是八個裡最友善的一個。
+
+### 2. `eng_eval.yaml` 在 `kb/` **根層**,不在子目錄
+
+只跑「複製子目錄」的迴圈會漏掉它,而 `replaceTeam` 會整個換掉 `eval/<team>/` ——
+**78 題工程 eval 直接消失,沒有任何錯誤訊息**。上一輪差一步就發生。
+
+它是 top-level YAML list,所以三份是**串接**不是覆蓋。腳本只在前一份沒有結尾換行時
+才補一個,否則兩份的清單項目會黏在一起。
+
+### 3. `kb_index.json` 必須在 `FROM` 根層,且與實際檔案**恰好一一對應**
+
+`validateEvalIndex` 讀死 `filepath.Join(eval, "kb_index.json")`,然後要求每個
+staged id `count == 1`、每列 `row.Team == -team`。「檔案複製了但 index 沒併」和
+「index 併了但檔案沒複製」都會被擋,**但訊息不會說是哪一邊少了**。腳本把同樣的檢查
+提前到還知道是哪個來源出問題的地方做。
+
+### 4. 一棵 staging = 一個 team
+
+承上,`row.Team != team` 直接 fail。兩個 team 就跑兩次合併、兩次 import。
+
+### 5. `kb/` 裡有一堆 eval **輸出**檔
+
+`admin-replay/kb/` 有 11 個 `eng_eval_out*.json`、`wpf-replay/kb/` 有 8 個。
+`stageBundle` 只認 `.md` / `.yaml` / `kb_index.json`,所以現在不會炸 —— 但這是巧合。
+腳本用白名單(`KB_SUBDIRS`),不整包複製；工程 repo map／API contract 放在
+`kb/engineering_reference/`，其 `doc_type` 是 restricted-only，不能改放到 public
+`reference`。
+
+### 6. eval 子目錄同名檔會靜默互蓋
+
+目前三份剛好是 `ADMIN/` `POS/` `PM/` 完全不重疊,**純屬運氣**。第四份來源若也放
+`eval/POS/ordering-eval.yaml`,`cp -r` 直接蓋掉、題目變少而 `-check` 全綠。
+腳本逐檔記錄 owner:
+
+```
+FATAL wpf-replay and fake both provide kb/eval/POS/void-eval.yaml
+```
+
+### 7. 少併一份來源比併錯更危險
+
+**腳本永遠不跳過 manifest 裡的來源。** 少一份會產出一棵完全自洽的樹、`-check` 全綠,
+然後 `replaceTeam` 把那 113 份從 `docs/` 刪掉。所以「找不到就略過」是禁止的:
+路徑不存在、沒有 `kb/`、沒有 `kb_index.json`、兩列指到同一個 root —— 全部 `sys.exit`。
+
+打錯字指到**另一份有效來源**則由 id 唯一性擋下(同一份併兩次 → id 全撞)。
+
+### 8. Windows MAX_PATH
+
+`modules/` 很深(`module/output/module/img/FLOW/shot.jpg`),`--out` 只要稍長就會讓
+每個複製動作噴 `WinError 3`。腳本對所有寫入目的地加 `\\?\` 前綴繞過 260 字元上限
+(`long_path()`),`--force` 的 `rmtree` 也要 —— 否則刪不掉自己剛建的樹。
+
+`docs/` 與 `eval/` 在 `.gitignore`,**import 無法用 git 還原**。動手前備份
+`docs/`、`eval/`、`.kb/`。
+
+---
+
+## 驗證過的行為
+
+- 對現行三份來源:**176 docs**(113 + 41 + 22)、203 files、0 collisions
+- 產出與上一輪手動 bash 合併的結果 **`diff -r` 為空**
+- `kbimport -team Store.POS -from <out>/kb -check` 綠
+- 反向測試全部 `sys.exit`:root 不存在、指到 `kb/` 本身、重複 root、team 不符、
+  eval 檔名碰撞、`--out` 非空
+- 反向測試坑 #1:移走 `modules/` 後 `-check` 失敗並指名該圖片

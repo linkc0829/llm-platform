@@ -70,6 +70,26 @@ linters-settings:
           - pkg: "github.com/redis/go-redis"
             desc: "Handler must call service, not adapters directly"
 
+      # ------------------------------------------------------------------
+      # Feature boundaries: auth and kb communicate through shared values
+      # and ports, never by importing each other's implementation package.
+      # ------------------------------------------------------------------
+      no-cross-feature-auth:
+        files:
+          - "**/internal/kb/*.go"
+          - "!**/internal/kb/*_test.go"
+        deny:
+          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/auth"
+            desc: "kb must consume shared principal values, not auth feature implementation"
+
+      no-cross-feature-kb:
+        files:
+          - "**/internal/auth/*.go"
+          - "!**/internal/auth/*_test.go"
+        deny:
+          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
+            desc: "auth must not depend on kb feature implementation"
+
 
 issues:
   exclude-rules:

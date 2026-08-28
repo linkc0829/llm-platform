@@ -249,17 +249,21 @@ func ParseFrontmatter(lines []string) (map[string]string, []string) {
 	return nil, lines
 }
 
-// mergeMeta overlays a section's own bold-key metadata on the file-level frontmatter.
+// mergeMeta overlays body metadata while keeping front matter authoritative for
+// every field that controls identity or section visibility. Other exporter
+// metadata keeps its old overlay behavior.
 func mergeMeta(fileMeta, bodyMeta map[string]string) map[string]string {
-	if len(fileMeta) == 0 {
-		return bodyMeta
-	}
 	merged := make(map[string]string, len(fileMeta)+len(bodyMeta))
 	for k, v := range fileMeta {
 		merged[k] = v
 	}
 	for k, v := range bodyMeta {
-		merged[k] = v
+		switch k {
+		case "id", "team", "access_level", "doc_type":
+			continue
+		default:
+			merged[k] = v
+		}
 	}
 	return merged
 }

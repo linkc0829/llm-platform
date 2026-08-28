@@ -25,13 +25,15 @@ import urllib.request
 
 # ===== 設定 =====
 KB_URL = "http://localhost:12598/chat"     # 對齊 .env 的 APP_PORT
-EVAL_DIR = r"<<EVAL_DIR>>"        # 含 <area>/*-eval.yaml 的目錄(make import 產出)
+# 含 <area>/*-eval.yaml 的目錄(make import 產出)。KB_EVAL_DIR 可覆蓋,
+# 這樣重跑驗收不必去改這份受版控的樣板。
+EVAL_DIR = os.getenv("KB_EVAL_DIR", r"<<EVAL_DIR>>")
 # 上一批全軍覆沒的自然語句 + 一題必須婉拒的無關問題,作為固定回歸集
 NATURAL_QS = ["如何結帳?", "如何作廢訂單?", "如何重印發票?", "怎麼看營業報表?",
               "如何暫存訂單?", "今天台北天氣如何?"]
 # Retry only transient transport/service failures. Non-retryable 4xx errors still fail fast.
 # Set KB_EVAL_CONCURRENCY=1 to restore serial mode; 1 is the safe default.
-MAX_ATTEMPTS = int(os.getenv("KB_EVAL_MAX_ATTEMPTS", "4"))
+MAX_ATTEMPTS = max(1, int(os.getenv("KB_EVAL_MAX_ATTEMPTS", "3")))
 BACKOFF_SECONDS = float(os.getenv("KB_EVAL_BACKOFF_SECONDS", "1"))
 CHECKPOINT_EVERY = max(1, int(os.getenv("KB_EVAL_CHECKPOINT_EVERY", "10")))
 CONCURRENCY = max(1, int(os.getenv("KB_EVAL_CONCURRENCY", "1")))
@@ -44,7 +46,7 @@ _NEXT_REQUEST_AT = 0.0
 EVAL_OUT = os.getenv("KB_EVAL_OUT", "eval_out.json")
 RETRYABLE_HTTP_STATUS = {408, 429, 500, 502, 503, 504}
 # 續跑前必須存在的欄位。判分邏輯一改就在這裡加名字,舊 checkpoint 才會被拒絕。
-CHECKPOINT_ROW_KEYS = ("src_ok", "src_scored")
+CHECKPOINT_ROW_KEYS = ("src_ok", "src_scored", "src_from_answer")
 # ================
 
 try:
@@ -75,9 +77,19 @@ def wait_for_request_slot():
     if delay > 0:
         time.sleep(delay)
 
+def _headers():
+    """/chat 現在要 bearer token。沒設 KB_EVAL_TOKEN 就不帶 header——服務若開著
+    auth 會整批回 401,那是正確的訊號,不要用「auth 關掉再跑」把它蓋掉:那條路
+    測到的不是使用者實際會走的路徑。"""
+    headers = {"Content-Type": "application/json"}
+    token = os.getenv("KB_EVAL_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    return headers
+
 def ask(q):
     body = json.dumps({"query": q}).encode()
-    req = urllib.request.Request(KB_URL, body, {"Content-Type": "application/json"})
+    req = urllib.request.Request(KB_URL, body, _headers())
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             wait_for_request_slot()
@@ -97,6 +109,13 @@ def ask(q):
             print(f"  retry {attempt}/{MAX_ATTEMPTS - 1}: {error}; sleep {delay:g}s", file=sys.stderr)
             time.sleep(delay)
     raise RuntimeError("request retry loop ended unexpectedly")
+
+
+def is_skippable_error(error):
+    """Only exhausted transient failures may skip a question."""
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code in RETRYABLE_HTTP_STATUS
+    return isinstance(error, (urllib.error.URLError, TimeoutError, ConnectionError))
 
 
 def check_binary_freshness(start):
@@ -218,6 +237,20 @@ def source_matches(expected_id, sources, paths):
     return any(stem in str(source) for source in sources)
 
 
+def answer_cites(expected_id, answer, paths):
+    """答案內文有沒有引到 expected_id 那份文件。
+
+    service 婉拒時會清空 sources(service.go:「A refusal carries no usable
+    sources」),但答案內文照樣會寫出文件路徑。少了這條退路,每一次婉拒都會被
+    source_matches 判成一次檢索失敗 —— 實測 3 題 D 全部命中了期待文件、答案裡
+    也引了路徑,卻因為 sources 是空的被記進 hit@1 分母當 miss。
+    """
+    if not expected_id:
+        return True
+    expected = paths.get(expected_id) or expected_id.split("--")[-1]
+    return expected.replace("\\", "/") in (answer or "").replace("\\", "/")
+
+
 def kind(q):
     # 順序有意義:先比對最specific的句型。模組化 export 之後「按鈕位於哪個畫面」
     # 佔了九成題目,舊版把它全歸到「其他」,分組統計等於沒有作用。
@@ -288,6 +321,12 @@ def load_checkpoint(questions):
             print("checkpoint ignored: questions or source IDs changed", file=sys.stderr)
             return [None] * len(questions)
         rows[index] = row
+    if os.getenv("KB_EVAL_RETRY_SKIPPED"):
+        retry_indexes = [index for index, row in enumerate(rows)
+                         if row is not None and row.get("skipped")]
+        for index in retry_indexes:
+            rows[index] = None
+        print(f"retrying {len(retry_indexes)} skipped questions")
     return rows
 
 if not os.getenv("KB_EVAL_SKIP_BUILD_CHECK"):
@@ -308,20 +347,44 @@ if completed_count:
 
 def evaluate_one(index):
     area, q = questions[index]
-    r = ask(q["q"])
+    try:
+        r = ask(q["q"])
+    except Exception as error:
+        if not is_skippable_error(error):
+            raise
+        return {"area": area, "q": q["q"], "kind": kind(q["q"]),
+                "mni": q.get("mni", False), "grounded": None, "ok": None,
+                "expected_source_id": q.get("src", ""), "src_ok": None,
+                "src_from_answer": False, "src_scored": False,
+                "strategy": None, "bm25_max": None, "best_cosine": None,
+                "sources": [], "answer": "", "skipped": True,
+                "skip_error": f"{type(error).__name__}: {error}"}
     g, srcs = r.get("grounded"), r.get("sources", [])
     # must_not_infer 題目要的就是「不要引用任何東西」,而題庫仍給它們填了 src。
     # 拿它去算引用正確率,等於把每一題「正確的拒答」計成一次引用失敗:實測
     # 176 題的 src_ok 是 159/176,少的 17 題全部是 mni,而且 sources 都是空的。
     # 那不是檢索錯,是計分把不適用的題目算進了分母 —— 對外引用 hit@1 時會低報。
     # None = 不適用,讓分母只含可回答的題目。
-    src_ok = None if q.get("mni") else source_matches(q.get("src", ""), srcs, INDEX_PATHS)
+    answer = r.get("answer") or ""
+    src_from_answer = False
+    if q.get("mni"):
+        src_ok = None
+    elif srcs:
+        src_ok = source_matches(q.get("src", ""), srcs, INDEX_PATHS)
+    else:
+        src_from_answer = True
+        # sources 空 = 婉拒被清空,不等於沒檢索到。退回看答案內文;連內文都沒引到
+        # 就是真的判不出來(檢索沒撈到?模型沒引?),記 None 退出分母,不要當 miss。
+        src_ok = answer_cites(q.get("src", ""), answer, INDEX_PATHS) or None
     ok = (g is False) if q.get("mni") else (g is True and src_ok)
     return {"area": area, "q": q["q"], "kind": kind(q["q"]),
             "mni": q.get("mni", False), "grounded": g, "ok": ok,
             "expected_source_id": q.get("src", ""),
             # 分開記錄,失敗時才分得出「檢索沒撈到」與「撈到了但模型婉拒」。
             "src_ok": src_ok,
+            # src_ok 是不是從答案內文推回來的(sources 被婉拒清空)。同時是
+            # checkpoint 的版本標記 —— 少了它就是舊計分邏輯的結果,要重跑。
+            "src_from_answer": src_from_answer,
             # 這一題算不算進 hit@1 的分母。獨立成欄位而不是靠 src_ok is None
             # 反推,是因為它同時是 checkpoint 的版本標記(見 CHECKPOINT_ROW_KEYS)。
             "src_scored": src_ok is not None,
@@ -329,7 +392,7 @@ def evaluate_one(index):
             # 的欄位。少了它,一輪全崩時分不清是模型差還是檢索退化成 BM25。
             "strategy": r.get("strategy"), "bm25_max": r.get("bm25_max"),
             "best_cosine": r.get("best_cosine"),
-            "sources": srcs, "answer": (r.get("answer") or "")[:200]}
+            "sources": srcs, "answer": answer[:200], "skipped": False}
 
 
 pending = [index for index, row in enumerate(rows) if row is None]
@@ -375,12 +438,21 @@ if pending:
 
 print("===== 題型通過率 =====")
 agg = collections.defaultdict(lambda: [0, 0])
+skipped_rows = [r for r in rows if r.get("skipped")]
 for r in rows:
+    if r.get("skipped"):
+        continue
     agg[r["kind"]][0 if r["ok"] else 1] += 1
 for k in sorted(agg):
     p, fl = agg[k]
     print(f"  {k:12} pass={p:3} fail={fl:3}")
-print(f"  總計 {sum(a[0] for a in agg.values())}/{len(rows)}")
+evaluated = len(rows) - len(skipped_rows)
+print(f"  總計 {sum(a[0] for a in agg.values())}/{evaluated}  skipped={len(skipped_rows)}")
+
+if skipped_rows:
+    print("\n===== 跳過題目 =====")
+    for r in skipped_rows:
+        print(f"  {r['area']:24} {r['q']}  {r['skip_error']}")
 
 print("\n===== 引用正確率 hit@1 =====")
 # 對外要報的主成果數字。分母只含可回答的題目 —— must_not_infer 的正解是
@@ -388,9 +460,11 @@ print("\n===== 引用正確率 hit@1 =====")
 scored = [r for r in rows if r.get("src_scored")]
 if scored:
     hit = sum(1 for r in scored if r["src_ok"])
-    skipped = len(rows) - len(scored)
+    not_applicable = sum(1 for r in rows
+                         if not r.get("skipped") and not r.get("src_scored"))
     print(f"  {hit}/{len(scored)} = {hit / len(scored):.1%}"
-          f"   (另有 {skipped} 題 must_not_infer 不計分)")
+          f"   (另有 {not_applicable} 題 must_not_infer 不計分,"
+          f" {len(skipped_rows)} 題 skipped)")
 else:
     print("  沒有可計分的題目 —— 題庫全是 must_not_infer?")
 
@@ -398,24 +472,31 @@ print("\n===== 失敗歸因 =====")
 # 服務婉拒時會把 sources 清空(service.go:「A refusal carries no usable sources」),
 # 所以 grounded=false 的題目【無法】從 /chat 判斷檢索有沒有命中 —— 把它算成
 # 「檢索失敗」是錯的。只有 grounded=true 卻沒引到期待文件,才確定是檢索問題。
-failed = [r for r in rows if not r["ok"] and not r["mni"]]
+failed = [r for r in rows
+          if not r.get("skipped") and not r["ok"] and not r["mni"]]
 miss = [r for r in failed if r["grounded"] is True and not r.get("src_ok", True)]
-undetermined = [r for r in failed if r["grounded"] is not True]
-other = [r for r in failed if r not in miss and r not in undetermined]
+# 婉拒但答案內文引到了期待文件 = 檢索有命中,問題在文件內容或模型,不是檢索。
+refused_hit = [r for r in failed if r["grounded"] is not True and r.get("src_ok") is True]
+undetermined = [r for r in failed if r["grounded"] is not True and r.get("src_ok") is None]
+other = [r for r in failed if r not in miss and r not in refused_hit and r not in undetermined]
 print(f"  確定是檢索問題(grounded=true 但沒引到期待文件):{len(miss)}")
-print(f"  無法由 /chat 判定(婉拒,sources 已被清空):{len(undetermined)}")
+print(f"  確定不是檢索問題(婉拒,但答案內文引到了期待文件):{len(refused_hit)}")
+print(f"  無法由 /chat 判定(婉拒,且答案也沒引到任何路徑):{len(undetermined)}")
+if refused_hit:
+    print("  ↳ 這批先去看文件本身:總覽是否宣告了「沒有可歸因的操作步驟」卻又列出步驟?")
 if other:
     print(f"  其他:{len(other)}")
 if undetermined:
     print("  ↳ 這批要用 retrieval probe 才分得出檢索 vs 模型:")
     print("    go test ./internal/kb/ -tags retrievalprobe -run TestRetrievalProbe -v")
-if failed and len(failed) == sum(1 for r in rows if not r["mni"]):
+if failed and len(failed) == sum(1 for r in rows
+                                if not r["mni"] and not r.get("skipped")):
     print("  ⚠ 非 must_not_infer 題全數失敗 —— 先確認 doc id 對應表有載入,再看資料。")
 
 print("\n===== 檢索模式 =====")
 # markdown = 只走 BM25(向量沒生效);hybrid = BM25+向量 RRF;vector = 只走向量。
 # 這一節要先看:BM25-only 的分數不能拿來評價模型,語意查詢(D 類)必然崩。
-modes = collections.Counter(r["strategy"] for r in rows)
+modes = collections.Counter(r["strategy"] for r in rows if not r.get("skipped"))
 print(" ", dict(modes))
 if modes.get("markdown"):
     print(f"  ✗ 有 {modes['markdown']} 題只走 BM25(strategy=markdown)—— 向量沒生效。")
@@ -424,20 +505,24 @@ if modes.get("markdown"):
 
 print("\n===== D 類失敗診斷:檢索落在哪個 anchor =====")
 for r in rows:
+    if r.get("skipped"):
+        continue
     if r["kind"] == "D 如何執行X" and not r["ok"]:
         anch = [s.split("#")[-1] for s in r["sources"][:3]]
         hit_step = any("步驟" in a or "總覽" in a for a in anch)
-        if not r["sources"]:
+        if not r["sources"] and r.get("src_ok") is True:
+            verdict = "文件/模型問題(婉拒,但答案內文引到了期待文件 —— 檢索有命中)"
+        elif not r["sources"]:
             # 婉拒時服務會清空 sources —— 空清單【不等於】沒檢索到。
             # 實測誤判過一次:模型明明在答案裡引用了步驟錨點,卻被記成檢索問題。
-            verdict = ("無法從 /chat 判定(婉拒時 sources 被清空)—— 看答案內文有無引用錨點,"
-                       "或用 retrieval probe 量")
+            verdict = ("無法從 /chat 判定(婉拒,答案內文也沒引到路徑)—— 用 retrieval probe 量")
         elif hit_step:
             verdict = "模型問題(步驟/總覽已命中仍婉拒)"
         else:
             verdict = "檢索問題(只撈到樣板段)"
         print(f"  {r['area']:24} {verdict}  anchors={anch} strategy={r['strategy']}")
-if any(r["kind"] == "D 如何執行X" and not r["ok"] and not r["sources"] for r in rows):
+if any(r.get("kind") == "D 如何執行X" and not r.get("skipped")
+       and not r["ok"] and not r["sources"] for r in rows):
     print("  ↳ 確定性量法:go test ./internal/kb/ -tags retrievalprobe -run TestRetrievalProbe -v")
 
 print("\n===== 自然語句回歸 =====")
@@ -446,8 +531,10 @@ for q in NATURAL_QS:
     try:
         r = ask(q)
     except Exception as error:
+        if not is_skippable_error(error):
+            raise
         natural_errors.append((q, error))
-        print(f"  ERROR {q}: {error}")
+        print(f"  SKIP after {MAX_ATTEMPTS} attempts {q}: {error}")
         continue
     a = (r.get("answer") or "").replace("\n", " ")
     anch = [s.split("#")[-1] for s in r.get("sources", [])[:2]]
@@ -465,6 +552,5 @@ save_checkpoint(rows)
 print(f"\n明細已寫入 {EVAL_OUT}。")
 if natural_errors:
     print(f"自然語句回歸有 {len(natural_errors)} 題未完成；下次重跑會沿用 eval checkpoint。", file=sys.stderr)
-    raise SystemExit(1)
 print("提醒:弱模型結果不穩定(同資料實測 14/32 與 17/32)——"
       "跑兩次再下結論,比較的是題型分布不是單題。")

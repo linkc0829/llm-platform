@@ -10,6 +10,11 @@ import json
 import pathlib
 import re
 import sys
+try:
+    import eng_scope
+except ModuleNotFoundError:  # support importlib-based callers and unit tests
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    import eng_scope
 
 # Windows console 預設 cp950,編不動 `⚠` —— 而那行印的正是「沒有任何已驗證符號」,
 # 最需要看到的訊息會變成 UnicodeEncodeError。
@@ -19,9 +24,8 @@ except Exception:
     pass
 
 # ---- config ---------------------------------------------------------------
-# 預設維持 wpf-replay,但別的 workspace 要能用 --kb 指過去 —— 硬寫路徑的結果是
-# 驗 admin-replay 時得先改原始碼。
-DEFAULT_KB = pathlib.Path(r"C:\Protech\wpf-replay\kb")
+DEFAULT_REPO = eng_scope.default_repo()
+DEFAULT_MANIFEST = DEFAULT_REPO / "kb_sources.json"
 # ---------------------------------------------------------------------------
 
 ENDPOINT = re.compile(r"\b(?:GET|POST|PUT|DELETE|PATCH)\s+/[\w/{}.\-]+")
@@ -55,6 +59,16 @@ def eng_block(text):
     return "\n".join(ln for ln in body.splitlines() if "**Verified" in ln)
 
 
+def verified_callchain(verified):
+    """只回傳明確標成 Verified Call Chain 的行。
+
+    Verified Commands 是 UI 入口命令，不代表後續呼叫鏈；兩者不能混成同一個
+    工程真值面向。沒有 Call Chain 行的 module 不應產生 call-chain 題。
+    """
+    return "\n".join(ln for ln in verified.splitlines()
+                   if "**Verified Call Chain**" in ln)
+
+
 def uniq(seq):
     return sorted({s.strip() for s in seq if s.strip()})
 
@@ -71,6 +85,7 @@ def collect(md):
 
 def collect_text(text, area, doc):
     verified = eng_block(text)
+    callchain = verified_callchain(verified)
     flow = FLOW_NAME.search(text)
     return {
         "area": area,
@@ -79,7 +94,7 @@ def collect_text(text, area, doc):
         "endpoints": uniq(ENDPOINT.findall(verified)),
         # 只留有點號的完整名稱,短名由比對時自行取尾segment
         "viewmodels": uniq(view_hosts(verified)),
-        "methods": uniq(m for m in METHOD.findall(verified) if len(m) > 3),
+        "methods": uniq(m for m in METHOD.findall(callchain) if len(m) > 3),
         "has_image": "![" in text,
     }
 
@@ -99,9 +114,16 @@ def questions(a):
     return qs
 
 
-def main(kb_dir=None):
-    kb_dir = pathlib.Path(kb_dir or DEFAULT_KB)
-    out = kb_dir / "eng_eval.yaml"
+def main(kb_dir=None, out_path=None, scope="merged", repo=None, manifest=None):
+    if kb_dir is not None:
+        scope = "source"
+    resolved = eng_scope.resolve(repo=pathlib.Path(repo) if repo else None,
+                                 manifest=pathlib.Path(manifest) if manifest else None,
+                                 scope=scope,
+                                 source_kb=pathlib.Path(kb_dir) if kb_dir else None)
+    kb_dir = resolved["docs"]
+    out = pathlib.Path(out_path) if out_path else resolved["eval"] / "eng_eval.yaml"
+    out.parent.mkdir(parents=True, exist_ok=True)
     areas = [collect(md) for md in sorted(kb_dir.glob(PROCEDURE_GLOB))]
     if not areas:
         sys.exit(f"找不到 procedure 文件:{kb_dir}")
@@ -120,9 +142,13 @@ def main(kb_dir=None):
         "- kind: must_not_infer\n  area: -\n  question: 會員積點兌換打哪支 API?\n"
         "  expect_any: []\n  expect_source: \n  expect_image: false"
     )
-    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    header = [f"# scope: {resolved['scope']}", f"# team: {resolved['team']}",
+              f"# manifest: {resolved['manifest']}",
+              f"# sources: {len(resolved['sources'])}",
+              f"# procedure_fingerprint: {eng_scope.procedure_fingerprint(kb_dir)}"]
+    out.write_text("\n".join(header + lines) + "\n", encoding="utf-8")
 
-    print(f"{out} — {total} 題 + 1 負例")
+    print(f"{out} — {total} 題 + 1 負例 (scope={resolved['scope']}, sources={len(resolved['sources'])})")
     print("\n每區真值涵蓋:")
     gaps = []
     for a in areas:
@@ -155,6 +181,14 @@ def _selftest():
     # 檔案路徑不是符號
     assert view_hosts("- **Verified ViewModels**: `A` (`src/app/ui.user/x`) hosts it.") == ["A"]
     assert "OnClickEnter" in METHOD.findall(v)
+    command_only = doc.replace(
+        "- **Verified ViewModels**: `Ui.Authorization.ViewModels.LoginViewModel`; `ClickEnter` → `OnClickEnter()`.\n",
+        "- **Verified ViewModels**: `Ui.Authorization.ViewModels.LoginViewModel`.\n"
+        "- **Verified Commands**: `OnClickEnter()`。\n"
+    )
+    command_only_area = collect_text(command_only, "login", "login-procedure")
+    assert command_only_area["methods"] == [], command_only_area["methods"]
+    assert [k for k, _, _ in questions(command_only_area)] == ["api", "viewmodel"], command_only_area
     assert eng_block("# 沒有工程對應") == ""          # 不是 H2 標題就不算
     # 新舊兩種標題都要吃得下(舊 bundle 不必重跑就能驗)
     assert ENDPOINT.findall(eng_block(doc.replace("## 工程對應", "## 登入 — 工程對應"))) == \
@@ -196,5 +230,13 @@ if __name__ == "__main__":
         _selftest()
     else:
         parser = argparse.ArgumentParser()
-        parser.add_argument("--kb", default=str(DEFAULT_KB), help="kb/ 目錄")
-        main(parser.parse_args().kb)
+        parser.add_argument("--scope", choices=("merged", "source"), default="merged",
+                            help="預設驗證 merge 後的 docs/<team>；source 需另帶 --kb")
+        parser.add_argument("--kb", help="scope=source 時的單一 kb/ 目錄")
+        parser.add_argument("--repo", default=str(DEFAULT_REPO), help="KB repo 根目錄")
+        parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST), help="kb_sources.json")
+        parser.add_argument("--out", help="eng_eval.yaml 輸出路徑；merged 預設 eval/<team>/eng_eval.yaml")
+        args = parser.parse_args()
+        if args.scope == "source" and not args.kb:
+            parser.error("--scope source requires --kb")
+        main(args.kb, args.out, args.scope, args.repo, args.manifest)

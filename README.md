@@ -10,6 +10,8 @@ A local Go service that indexes Markdown files from `docs/`, retrieves relevant 
 cp .env.example .env
 # Set OPENAI_API_KEY, or use fake mode for quota-free local checks:
 $env:KB_LLM_MODE="fake"
+# This quick-start bypass is local-only and forces the server to 127.0.0.1:
+$env:KB_AUTH_DISABLED="true"
 
 # Required: a fresh clone has an empty docs/. See "Import a team bundle".
 make import TEAM=Store.POS FROM=C:\Protech\wpf-replay\kb
@@ -31,9 +33,13 @@ Invoke-RestMethod -Method Post -Uri http://localhost:12598/chat `
 ## Endpoints
 
 - `GET /health` - health check.
-- `POST /index` - parses all Markdown below `docs/`, writes `.kb/index.json`, and loads the in-memory index.
-- `POST /chat` - answers a question from indexed sections only, returning `answer`, `grounded`, `sources`, `images`, `strategy`, and `session_id`. `grounded` is `false` when retrieval fell below threshold or the model declined to answer despite context — branch on it instead of parsing the answer text.
-- `/mcp` - Streamable HTTP MCP endpoint exposing the read-only `search_kb` tool.
+- `POST /index` - requires a bearer token with the `Indexer` capability; parses and audits all Markdown below `docs/`, rejects unknown or drifting section access metadata before saving or embedding, then loads the in-memory index.
+- `POST /chat` - requires any valid bearer token and answers a question from indexed sections only, returning `answer`, `grounded`, `sources`, `images`, `strategy`, and `session_id`. `grounded` is `false` when retrieval fell below threshold or the model declined to answer despite context — branch on it instead of parsing the answer text.
+- `/mcp` - Streamable HTTP MCP endpoint exposing the read-only `search_kb` tool; it requires a bearer token.
+- `GET /admin/tokens` - requires an admin bearer token; lists principal IDs, names, capabilities, and creation times without token hashes.
+- `POST /admin/tokens` - requires an admin bearer token; creates a non-admin token and returns its plaintext exactly once. A request `admin` field is ignored.
+- `DELETE /admin/tokens/:id` - requires an admin bearer token; revokes a non-admin principal by immutable ID. Admin principals can only be revoked by the local `kbtoken` CLI.
+- `cmd/kbmcp` stdio - local process transport with no HTTP trust boundary; it intentionally runs with full access for the user who can execute the process.
 
 ## MCP for coding agents
 
@@ -47,6 +53,22 @@ The same tool is served over two transports, backed by the same service and inde
 | stdio | `cmd/kbmcp` (`make mcp`) | Development, MCP Inspector, or a client that cannot speak Streamable HTTP |
 
 Prefer HTTP. Each stdio client spawns its own process with its own copy of the index, and its queries land in a separate log file, which makes the metrics in `log/kb.log` incomplete.
+
+`cmd/kb` protects `/chat` and `/mcp` with the bearer token from `KB_AUTH_FILE`; `cmd/kbmcp` deliberately has no token header because the process owner already has local access to the corpus.
+
+When authentication is enabled, `cmd/kbtoken` is the local bootstrap and admin-recovery tool. Stop the service first; the CLI also checks `/health`, while the shared `auth.json.lock` is the actual cross-process write lock:
+
+```powershell
+$env:KB_AUTH_FILE="auth.json"
+go run ./cmd/kbtoken create-admin -name platform-admin
+# Save the token from this output once, then start cmd/kb.
+go run ./cmd/kbtoken list
+go run ./cmd/kbtoken rotate-admin -id <old-admin-id>
+go run ./cmd/kbtoken revoke-admin -id <old-admin-id>
+```
+
+`rotate-admin` creates a new principal ID and leaves the old admin alive until it is explicitly revoked. Revoking the last admin requires `-force`; if that is intentional, `create-admin` can bootstrap a new admin from the resulting empty auth file. A stale lock is never removed automatically—stop any writer and remove `auth.json.lock` manually only after confirming no process owns it.
+
 
 Import a bundle and build the index before starting either one:
 
@@ -66,6 +88,10 @@ Run `cmd/kb` on the central host after importing and indexing its knowledge base
     "knowledge_base": {
       "type": "remote",
       "url": "http://192.168.17.139:12598/mcp",
+      "headers": {
+        "Authorization": "Bearer {env:KB_QA_TOKEN}"
+      },
+      "oauth": false,
       "enabled": true,
       "timeout": 60000
     }
@@ -73,7 +99,11 @@ Run `cmd/kb` on the central host after importing and indexing its knowledge base
 }
 ```
 
-Allow TCP port 12598 only from approved company network ranges in Windows Firewall. This service has no application-layer authentication: `/health`, `/index`, `/chat`, and `/mcp` are all reachable by any permitted network client.
+Allow TCP port 12598 only from approved company network ranges in Windows Firewall. `/health` is public; `/chat`, `/index`, and `/mcp` require a bearer token when auth is enabled.
+
+This example uses plain HTTP for a trusted-network test. Bearer tokens are credentials: before rollout, put the endpoint behind HTTPS or use a confirmed encrypted trusted channel.
+
+Missing or invalid bearer tokens intentionally return 401 without WWW-Authenticate. This service does not implement OAuth discovery or flow; that is a deliberate deviation from RFC 9110, so do not add resource_metadata to the MCP auth wrapper.
 
 ### Local stdio server (development)
 
@@ -120,6 +150,9 @@ Environment variables:
 
 - `APP_PORT` - HTTP port, default `12598`.
 - `APP_SHUTDOWN_TIMEOUT` - graceful shutdown timeout, default `10s`.
+- `KB_AUTH_FILE` - required auth snapshot for `cmd/kb` unless auth is explicitly disabled.
+- `KB_AUTH_DISABLED=true` - local-only escape hatch; the server forces `127.0.0.1` and leaves HTTP/MCP routes unguarded.
+- `/admin/tokens` is registered only when authentication is enabled. The network API can grant `indexer`, but it can never create or delete an admin principal.
 - `LOG_LEVEL` - zap log level, default `info`.
 - `LOG_ENCODING` - zap encoding, default `json`. The `jq` recipes for the query log assume `json`.
 - `LOG_OUTPUT` - comma-separated log sinks, default `stdout,log/kb.log`. Missing directories are created. Set `stdout` alone to stop writing files. `cmd/kbmcp` drops any `stdout` sink regardless: its stdout carries the JSON-RPC protocol.
@@ -133,6 +166,27 @@ Environment variables:
 - `KB_DOCS_DIR` / `KB_INDEX_DIR` - source and local index directories.
 
 ## Retrieval
+
+Every `/index` run audits section visibility before `Save` or embedding. `procedure`
+sections whose heading contains 工程對應 are engineering-only; `ui_inventory`
+and `playlist` sections are public; other or missing `doc_type` values fail the
+index. Endpoint markers under a non-engineering heading also fail closed. The
+rule is intentionally asymmetric: an engineering `ViewModels` or `Commands`
+section may contain no endpoint and still indexes successfully.
+
+The 2026-08-14 corpus baseline was 679 sections with anchor version 2 and
+fingerprint
+`50347b40088c988e1722914ad5770ae2ec918d328bf7e6fe42800f5501b44fb3`.
+That fingerprint is a precondition, not a permanent claim: if the current
+documents produce a different fingerprint, rerun the classification dry run
+before comparing counts.
+
+If an audit fails, the new content is not saved, embedded, or swapped into
+memory. The previous last-known-good snapshot continues serving; an existing
+section from that snapshot can still be retrieved until a corrected `/index`
+succeeds. An index failure is therefore not an immediate revocation mechanism.
+Startup applies the same audit to a persisted snapshot; if it fails, the
+snapshot is rejected and the service remains unready until `/index` rebuilds it.
 
 Two-way recall, fused, then truncated. There is no reranking stage.
 
@@ -217,13 +271,18 @@ All imported documents currently share one access level and one index. If a team
 ```text
 cmd/kb/                  # HTTP server entrypoint (/health, /index, /chat)
 cmd/kbimport/            # transactional team-bundle importer (make import)
+cmd/kbtoken/             # local auth bootstrap, admin rotation, and revoke CLI
 cmd/kbmcp/               # stdio MCP server exposing the search_kb tool
 internal/kb/             # domain, service, ports, handlers, markdown/vector repos, LLM adapters
+internal/auth/           # token resolution, CRUD, atomic auth persistence, HTTP adapter
 internal/mcpserver/      # MCP adapter over the kb service (parallel to the HTTP handler)
 internal/bootstrap/      # composition root — wires the kb service for both entrypoints
 internal/platform/config # env/.env config loading
 internal/platform/httpserver
+internal/platform/atomicfile
+internal/platform/lockfile
 internal/platform/logger
+postman/                 # Postman collection covering every endpoint and its guards
 thoughts/qrspi/          # QRSPI artifacts
 ```
 
@@ -233,17 +292,31 @@ Not in version control — recreate with `make import` and `POST /index`:
 docs/<team>/             # imported Markdown and _assets/ screenshots
 eval/<team>/             # bundle eval YAML and kb_index.json
 .kb/index.json
-.kb/faiss_index/metadata.json
+.kb/faiss_index/vectors.bin
 ```
 
 ## Make Targets
 
 ```powershell
-make run      # run ./cmd/kb (HTTP API + /mcp endpoint)
-make mcp      # run the stdio MCP server (dev / Inspector only)
-make build    # build bin/kb and bin/kbmcp
-make import   # import a team bundle
-make test     # go test -race -short -count=1 ./...
-make lint     # golangci-lint run ./...
-make verify   # lint + test
+make run            # run ./cmd/kb; needs $env:KB_AUTH_FILE or KB_AUTH_DISABLED=true
+make mcp            # run the stdio MCP server (dev / Inspector only)
+make build          # build bin/kb.exe, bin/kbmcp.exe, and bin/kbtoken.exe
+make import         # import a team bundle
+make test           # go test -race -short -count=1 ./...
+make test-cover     # same, plus coverage.out and coverage.html
+make lint           # golangci-lint run ./...
+make fmt            # gofmt -s -w .
+make vet            # go vet ./...
+make verify         # lint + test
+make hooks-install  # enable .githooks/pre-commit (gofmt, lint, unit tests)
+make clean          # remove bin/ and coverage output (PowerShell/cmd only)
+
+go run ./cmd/kbtoken list   # list auth metadata while cmd/kb is stopped
 ```
+
+`make build` writes the `.exe` suffix explicitly, because `go build -o` uses the
+name verbatim rather than adding it. The Inspector command above and
+`run_eng_eval.py` both invoke `bin/kbmcp.exe`, so the suffix is not optional.
+
+Run `make hooks-install` once per clone. The hook runs `gofmt -l`, `golangci-lint`
+and the unit tests before each commit; `git commit --no-verify` skips it.

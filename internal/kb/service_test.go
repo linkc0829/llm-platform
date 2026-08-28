@@ -56,10 +56,11 @@ func (f *fakeLLM) Answer(_ context.Context, query string, sections []Section, hi
 }
 
 type fakeEmbedder struct {
-	vectors map[string][]float32
-	err     error
-	calls   int
-	texts   []string
+	vectors  map[string][]float32
+	err      error
+	calls    int
+	texts    []string
+	identity string
 }
 
 func (f *fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
@@ -75,6 +76,10 @@ func (f *fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, er
 	return out, nil
 }
 
+func (f *fakeEmbedder) EmbedIdentity() string {
+	return f.identity
+}
+
 type fakeVectorStore struct {
 	loadModel   string
 	loadVectors map[string][]float32
@@ -88,14 +93,18 @@ func (f *fakeVectorStore) Load(_ context.Context) (string, map[string][]float32,
 	return f.loadModel, f.loadVectors, f.loadErr
 }
 
-func (f *fakeVectorStore) Save(_ context.Context, model string, vectors map[string][]float32) error {
-	f.savedModel = model
+func (f *fakeVectorStore) Save(_ context.Context, identity string, vectors map[string][]float32) error {
+	f.savedModel = identity
 	f.saved = vectors
+	if f.saveErr == nil {
+		f.loadModel = identity
+		f.loadVectors = vectors
+	}
 	return f.saveErr
 }
 
 func TestServiceIndexBuildsAndPersistsIndex(t *testing.T) {
-	section, err := NewSection("refund_policy.md", "Refund Timeline", "Refunds take 5-7 business days.", nil, nil)
+	section, err := NewSection("refund_policy.md", "Refund Timeline", "Refunds take 5-7 business days.", map[string]string{"doc_type": "procedure"}, nil)
 	if err != nil {
 		t.Fatalf("NewSection() error = %v, want nil", err)
 	}
@@ -141,7 +150,7 @@ func TestServiceLoadOnStartupIgnoresMismatchedVectorModel(t *testing.T) {
 	if !errors.Is(err, ErrVectorsIgnored) {
 		t.Fatalf("Service.LoadOnStartup() error = %v, want ErrVectorsIgnored", err)
 	}
-	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), "How long do refunds take?", "session")
 	if err != nil {
 		t.Fatalf("Service.Chat() error = %v, want nil", err)
 	}
@@ -164,7 +173,7 @@ func TestServiceChatStripsUngroundedSentinel(t *testing.T) {
 		t.Fatalf("Service.LoadOnStartup() error = %v, want nil", err)
 	}
 
-	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), "How long do refunds take?", "session")
 	if err != nil {
 		t.Fatalf("Service.Chat() error = %v, want nil", err)
 	}
@@ -205,7 +214,7 @@ func TestServiceChatDetectsCorruptedSentinel(t *testing.T) {
 			if err := svc.LoadOnStartup(context.Background()); err != nil {
 				t.Fatalf("Service.LoadOnStartup() error = %v, want nil", err)
 			}
-			answer, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
+			answer, _, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), "How long do refunds take?", "session")
 			if err != nil {
 				t.Fatalf("Service.Chat() error = %v, want nil", err)
 			}
@@ -241,7 +250,7 @@ func TestServiceConcurrentIndexAndChatUsesConsistentSnapshot(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
+			_, _, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), "How long do refunds take?", "session")
 			if err != nil {
 				t.Errorf("Service.Chat(concurrent %d) error = %v, want nil", i, err)
 			}
@@ -312,7 +321,7 @@ func TestServiceChat(t *testing.T) {
 			svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
 			svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, tt.ready)
 
-			answer, sessionID, _, err := svc.ChatWithMetrics(context.Background(), tt.query, "session-1")
+			answer, sessionID, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), tt.query, "session-1")
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Service.Chat(%q) error = %v, want %v", tt.query, err, tt.wantErr)
 			}
@@ -345,11 +354,11 @@ func TestServiceChat(t *testing.T) {
 }
 
 func TestServiceChatWeakScoreUsesVectorRetrieval(t *testing.T) {
-	bm25Section, err := NewSection("refund_policy.md", "Refund Timeline", "weak body", nil, nil)
+	bm25Section, err := NewSection("refund_policy.md", "Refund Timeline", "weak body", map[string]string{"doc_type": "procedure"}, nil)
 	if err != nil {
 		t.Fatalf("NewSection(bm25Section) error = %v, want nil", err)
 	}
-	vectorSection, err := NewSection("account_help.md", "Change Email Address", "nearest vector body", nil, nil)
+	vectorSection, err := NewSection("account_help.md", "Change Email Address", "nearest vector body", map[string]string{"doc_type": "procedure"}, nil)
 	if err != nil {
 		t.Fatalf("NewSection(vectorSection) error = %v, want nil", err)
 	}
@@ -367,7 +376,7 @@ func TestServiceChatWeakScoreUsesVectorRetrieval(t *testing.T) {
 		vectorSection.Citation(): {0, 1},
 	}, true)
 
-	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "weak weak", "session-1")
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), "weak weak", "session-1")
 	if err != nil {
 		t.Fatalf("Service.Chat(weak vector query) error = %v, want nil", err)
 	}
@@ -388,7 +397,7 @@ func TestServiceChatAnswersChineseQueryWithZeroBM25(t *testing.T) {
 	svc := NewService(&fakeSectionStore{}, llm, embedder, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{sections[0].Citation(): {1, 0}, sections[1].Citation(): {0, 1}}, true)
 
-	answer, _, _, err := svc.ChatWithMetrics(context.Background(), query, "session")
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), query, "session")
 	if err != nil {
 		t.Fatalf("Service.Chat() error = %v, want nil", err)
 	}
@@ -398,14 +407,14 @@ func TestServiceChatAnswersChineseQueryWithZeroBM25(t *testing.T) {
 }
 
 func TestServiceChatEnglishIdentifierUsesBM25(t *testing.T) {
-	section, err := NewSection("login.md", "Engineering Context", "LoginViewModel validates the dynamic password.", nil, nil)
+	section, err := NewSection("login.md", "Engineering Context", "LoginViewModel validates the dynamic password.", map[string]string{"doc_type": "procedure"}, nil)
 	if err != nil {
 		t.Fatalf("NewSection() error = %v, want nil", err)
 	}
 	llm := &fakeLLM{answer: "answer"}
 	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot([]Section{section}, BuildCorpus([]Section{section}), map[string][]float32{}, true)
-	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "LoginViewModel LoginViewModel LoginViewModel LoginViewModel LoginViewModel", "session")
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), "LoginViewModel LoginViewModel LoginViewModel LoginViewModel LoginViewModel", "session")
 	if err != nil {
 		t.Fatalf("Service.Chat() error = %v, want nil", err)
 	}
@@ -420,7 +429,7 @@ func TestServiceChatDegradesWhenEmbedderFails(t *testing.T) {
 	svc := NewService(&fakeSectionStore{}, llm, &fakeEmbedder{err: errors.New("down")}, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{sections[0].Citation(): {1, 0}}, true)
 
-	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "session")
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), "How long do refunds take?", "session")
 	if err != nil {
 		t.Fatalf("Service.Chat() error = %v, want nil", err)
 	}
@@ -430,18 +439,18 @@ func TestServiceChatDegradesWhenEmbedderFails(t *testing.T) {
 }
 
 func TestServiceChatReturnsCitedImages(t *testing.T) {
-	first, err := NewSection("login.md", "Password", "Password", nil, []string{"screenshots/login.png", "screenshots/shared.png"})
+	first, err := NewSection("login.md", "Password", "Password", map[string]string{"doc_type": "procedure"}, []string{"screenshots/login.png", "screenshots/shared.png"})
 	if err != nil {
 		t.Fatalf("NewSection(first) error = %v, want nil", err)
 	}
-	second, err := NewSection("reports.md", "Report", "Report", nil, []string{"screenshots/shared.png", "screenshots/report.png"})
+	second, err := NewSection("reports.md", "Report", "Report", map[string]string{"doc_type": "procedure"}, []string{"screenshots/shared.png", "screenshots/report.png"})
 	if err != nil {
 		t.Fatalf("NewSection(second) error = %v, want nil", err)
 	}
 	svc := NewService(&fakeSectionStore{}, &fakeLLM{answer: "answer"}, nil, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot([]Section{first, second}, BuildCorpus([]Section{first, second}), map[string][]float32{}, true)
 
-	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "Password Password Password Report Report Report", "session")
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), "Password Password Password Report Report Report", "session")
 	if err != nil {
 		t.Fatalf("Service.ChatWithMetrics() error = %v, want nil", err)
 	}
@@ -457,7 +466,7 @@ func TestServiceChatGeneratesSessionID(t *testing.T) {
 	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, true)
 
-	_, sessionID, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "")
+	_, sessionID, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), "How long do refunds take?", "")
 	if err != nil {
 		t.Fatalf("Service.Chat(empty session) error = %v, want nil", err)
 	}
@@ -472,11 +481,11 @@ func TestServiceChatUsesHistoryForFollowUpRetrieval(t *testing.T) {
 	svc := NewService(&fakeSectionStore{}, llm, nil, nil, NewInProcStore(), "test-model")
 	svc.storeIndexSnapshot(sections, BuildCorpus(sections), map[string][]float32{}, true)
 
-	_, sessionID, _, err := svc.ChatWithMetrics(context.Background(), "How long do refunds take?", "")
+	_, sessionID, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), "How long do refunds take?", "")
 	if err != nil {
 		t.Fatalf("Service.Chat(first turn) error = %v, want nil", err)
 	}
-	answer, _, _, err := svc.ChatWithMetrics(context.Background(), "And which items can't be refunded?", sessionID)
+	answer, _, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), "And which items can't be refunded?", sessionID)
 	if err != nil {
 		t.Fatalf("Service.Chat(follow-up) error = %v, want nil", err)
 	}
@@ -499,18 +508,29 @@ func TestInProcStoreKeepsRecentTurnsAndExpiresIdleSessions(t *testing.T) {
 	store := NewInProcStore()
 	store.now = func() time.Time { return now }
 
-	for i := 0; i < 6; i++ {
-		store.Append(context.Background(), "s1", Turn{Query: string(rune('a' + i)), Answer: "answer"})
+	if _, err := store.Claim(context.Background(), "s1", "owner-a"); err != nil {
+		t.Fatalf("InProcStore.Claim(s1, owner-a) error = %v, want nil", err)
 	}
-	turns := store.Get(context.Background(), "s1")
+	for i := 0; i < 6; i++ {
+		if err := store.Append(context.Background(), "s1", "owner-a", Turn{Query: string(rune('a' + i)), Answer: "answer"}); err != nil {
+			t.Fatalf("InProcStore.Append(s1, owner-a, turn %d) error = %v, want nil", i, err)
+		}
+	}
+	turns, err := store.Claim(context.Background(), "s1", "owner-a")
+	if err != nil {
+		t.Fatalf("InProcStore.Claim(s1, owner-a) error = %v, want nil", err)
+	}
 	if len(turns) != 5 || turns[0].Query != "b" || turns[4].Query != "f" {
-		t.Errorf("InProcStore.Get(s1) turns = %#v, want last five b..f", turns)
+		t.Errorf("InProcStore.Claim(s1, owner-a) turns = %#v, want last five b..f", turns)
 	}
 
 	now = now.Add(31 * time.Minute)
-	turns = store.Get(context.Background(), "s1")
+	turns, err = store.Claim(context.Background(), "s1", "owner-a")
+	if err != nil {
+		t.Fatalf("InProcStore.Claim(expired s1, owner-a) error = %v, want nil", err)
+	}
 	if len(turns) != 0 {
-		t.Errorf("InProcStore.Get(expired s1) turns = %#v, want empty", turns)
+		t.Errorf("InProcStore.Claim(expired s1, owner-a) turns = %#v, want empty", turns)
 	}
 }
 
@@ -528,7 +548,7 @@ func mustSampleSections(t *testing.T) []Section {
 
 	sections := make([]Section, 0, len(specs))
 	for _, spec := range specs {
-		section, err := NewSection(spec.file, spec.heading, spec.body, nil, nil)
+		section, err := NewSection(spec.file, spec.heading, spec.body, map[string]string{"doc_type": "procedure", "team": "Store.POS"}, nil)
 		if err != nil {
 			t.Fatalf("NewSection(%q, %q) error = %v, want nil", spec.file, spec.heading, err)
 		}
@@ -574,10 +594,10 @@ func TestServiceChatLogsEveryQuery(t *testing.T) {
 		t.Fatalf("Service.LoadOnStartup() error = %v, want nil", err)
 	}
 
-	if _, _, _, err := svc.ChatWithMetrics(context.Background(), "login", "session"); err != nil {
+	if _, _, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), "login", "session"); err != nil {
 		t.Fatalf("Service.Chat() error = %v, want nil", err)
 	}
-	if _, _, _, err := svc.ChatWithMetrics(context.Background(), "zzzz", "session"); err != nil {
+	if _, _, _, err := svc.ChatWithMetrics(context.Background(), FullAccessPrincipal("test-owner"), "zzzz", "session"); err != nil {
 		t.Fatalf("Service.Chat() error = %v, want nil", err)
 	}
 
@@ -589,8 +609,63 @@ func TestServiceChatLogsEveryQuery(t *testing.T) {
 		if _, ok := entries[0].ContextMap()[want]; !ok {
 			t.Errorf("kb_query missing field %q, got %v", want, entries[0].ContextMap())
 		}
+		if got := entries[0].ContextMap()["owner_id"]; got != "test-owner" {
+			t.Errorf("kb_query owner_id = %v, want test-owner", got)
+		}
 	}
 	if got := entries[1].ContextMap()["grounded"]; got != false {
 		t.Errorf("kb_query grounded = %v for an unmatched query, want false — the log is only useful if refusals are marked", got)
+	}
+}
+
+// TestComposeQuery pins what actually gets ranked, which is not what the caller
+// asked. Nothing else covers it: the evals and the retrieval probe ask each
+// question in its own session, so no other test reaches a second turn.
+func TestComposeQuery(t *testing.T) {
+	prior := []Turn{
+		{Query: "折扣規則怎麼設定?"},
+		{Query: "折扣範本可以套用到哪些商品?"},
+		{Query: "折扣參數有哪些欄位?"},
+	}
+	tests := []struct {
+		name    string
+		history []Turn
+		query   string
+		want    string
+	}{
+		{
+			name:  "first_turn_is_the_query_alone",
+			query: "如何作廢訂單?",
+			want:  "如何作廢訂單?",
+		},
+		{
+			// The regression the marker test exists to prevent: prepending here
+			// made retrieval return the discount sections, not the void ones.
+			name:    "a_self_sufficient_query_ignores_history_entirely",
+			history: prior,
+			query:   "如何作廢訂單?",
+			want:    "如何作廢訂單?",
+		},
+		{
+			// Without the subject this asks nothing answerable, so it is the one
+			// case that must pay the dilution.
+			name:    "an_anaphoric_query_takes_the_previous_turn",
+			history: []Turn{{Query: "如何作廢訂單?"}},
+			query:   "那要什麼權限?",
+			want:    "如何作廢訂單? 那要什麼權限?",
+		},
+		{
+			name:    "only_the_previous_turn_is_taken_not_the_window",
+			history: prior,
+			query:   "它有哪些欄位?",
+			want:    "折扣參數有哪些欄位? 它有哪些欄位?",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := composeQuery(tc.history, tc.query); got != tc.want {
+				t.Errorf("composeQuery() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

@@ -17,6 +17,7 @@ package kb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -48,6 +49,29 @@ type probeQuery struct {
 	// vector side is the one failing, and "the file ranked" is not the same as
 	// "the answering section ranked".
 	WantAnchor string `json:"wantAnchor"`
+	// Prior is the questions asked earlier in the same session, oldest first.
+	//
+	// Service.chat does not rank the query the caller sent: composeQuery
+	// concatenates up to five previous questions in front of it and the result
+	// feeds both the BM25 tokens and the embedding. Leaving that out meant every
+	// number this probe (and the evals, which ask each question in its own
+	// session) has ever produced described single-turn retrieval only, while real
+	// sessions rank a query the probe never saw. Empty keeps the old behaviour.
+	Prior []string `json:"prior"`
+	// Shape groups cases in the summary ("follow-up", "topic-switch",
+	// "anaphora", ...). Dilution and topic-stickiness fail differently, so one
+	// pooled hit rate would average away the only thing worth seeing.
+	Shape string `json:"shape"`
+}
+
+// priorTurns adapts the probe's plain strings to what composeQuery consumes.
+// Only Query is read there, so the answers can stay empty.
+func priorTurns(prior []string) []Turn {
+	turns := make([]Turn, 0, len(prior))
+	for _, q := range prior {
+		turns = append(turns, Turn{Query: q})
+	}
+	return turns
 }
 
 // rankOf reports the 1-based position of the first section whose anchor contains
@@ -59,6 +83,18 @@ func rankOf(list []ScoredSection, indexed []Section, want string) int {
 	for i, s := range list {
 		if s.Index >= 0 && s.Index < len(indexed) &&
 			strings.Contains(indexed[s.Index].Anchor(), want) {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+func rankOfSection(list []Section, want string) int {
+	if want == "" {
+		return 0
+	}
+	for i, s := range list {
+		if strings.Contains(s.Anchor(), want) {
 			return i + 1
 		}
 	}
@@ -119,7 +155,14 @@ func TestRetrievalProbe(t *testing.T) {
 
 	ctx := context.Background()
 	if err := svc.LoadOnStartup(ctx); err != nil {
-		t.Fatalf("LoadOnStartup() error = %v — build the index first (make import, then POST /index)", err)
+		if errors.Is(err, ErrNotIndexed) || errors.Is(err, ErrIndexStale) {
+			t.Log("index missing or stale — running svc.Index...")
+			if _, _, err := svc.Index(ctx); err != nil {
+				t.Fatalf("svc.Index() error = %v", err)
+			}
+		} else {
+			t.Fatalf("LoadOnStartup() error = %v — build the index first (make import, then POST /index)", err)
+		}
 	}
 	indexed, corpus, vecMap, ready := svc.indexSnapshot()
 	if !ready {
@@ -151,32 +194,57 @@ func TestRetrievalProbe(t *testing.T) {
 		}
 	}
 
+	type shapeStat struct{ hits, asked int }
+	shapes := map[string]*shapeStat{}
+	shapeOrder := []string{}
+
 	var stepHits, areaHits, boilerplate, total int
 	for _, tc := range probeQueries {
-		// Mirror Service.chat exactly: same candidate trimming, same fusion, same k.
-		bm25List := corpus.RankBM25(tokenize(tc.Query))
+		// Mirror Service.chat exactly: same composed query, same candidate
+		// trimming, same fusion, same k.
+		retrievalQuery := composeQuery(priorTurns(tc.Prior), tc.Query)
+		allow := func(section Section) bool {
+			return CanSee(FullAccessPrincipal(AnonymousOwner), section)
+		}
+		bm25List := corpus.RankBM25(tokenize(retrievalQuery))
+		bm25List = filterRankedSections(indexed, bm25List, allow)
 		for len(bm25List) > 0 && bm25List[len(bm25List)-1].Score <= 0 {
 			bm25List = bm25List[:len(bm25List)-1]
 		}
-		if len(bm25List) > candidateK {
-			bm25List = bm25List[:candidateK]
+		var bmL1, bmL0 []ScoredSection
+		for _, item := range bm25List {
+			if indexed[item.Index].Meta()["doc_type"] == "distilled" {
+				bmL1 = append(bmL1, item)
+			} else {
+				bmL0 = append(bmL0, item)
+			}
 		}
 		var vecList []ScoredSection
-		if vectors, err := oai.Embed(ctx, []string{tc.Query}); err == nil && len(vectors) > 0 {
-			vecList = RankVector(indexed, vecMap, vectors[0], candidateK)
+		if vectors, err := oai.Embed(ctx, []string{retrievalQuery}); err == nil && len(vectors) > 0 {
+			vecList = RankVector(indexed, vecMap, vectors[0], len(indexed), allow)
 		} else if err != nil {
-			t.Fatalf("Embed(%q) error = %v — is the embedder reachable?", tc.Query, err)
+			t.Fatalf("Embed(%q) error = %v — is the embedder reachable?", retrievalQuery, err)
 		}
-		ranked := bm25List
-		if len(vecList) > 0 && len(bm25List) > 0 {
-			ranked = FuseRRF([][]ScoredSection{bm25List, vecList}, rrfK)
-		} else if len(vecList) > 0 {
-			ranked = vecList
+
+		poolRes := PartitionAndRankPools(indexed, bm25List, vecList, topK, candidateK, rrfK, minThreshold)
+
+		expanded, err := ExpandDistilled(
+			poolRes.TopL1,
+			poolRes.TopL0,
+			indexed,
+			poolRes.RankedL0,
+			allow,
+			l1K,
+			candidateK,
+			budget,
+		)
+		if err != nil {
+			t.Fatalf("ExpandDistilled error: %v", err)
 		}
 
 		var anchors []string
 		hitStep, hitArea := false, false
-		for _, sec := range topSections(indexed, ranked, topK) {
+		for _, sec := range expanded {
 			total++
 			anchors = append(anchors, sec.Anchor())
 			if strings.Contains(sec.Anchor(), "步驟") {
@@ -197,13 +265,37 @@ func TestRetrievalProbe(t *testing.T) {
 		if hitArea {
 			areaHits++
 		}
+		if tc.WantArea != "" {
+			shape := tc.Shape
+			if shape == "" {
+				shape = "single-turn"
+			}
+			if _, ok := shapes[shape]; !ok {
+				shapes[shape] = &shapeStat{}
+				shapeOrder = append(shapeOrder, shape)
+			}
+			shapes[shape].asked++
+			if hitArea {
+				shapes[shape].hits++
+			}
+		}
 		if tc.WantAnchor != "" {
-			// Unfused ranks: which channel is failing is invisible in the fused list.
-			t.Logf("[bm25=%-3d vec=%-3d fused=%-3d] %s  (want %q, bm25 candidates=%d)",
-				rankOf(bm25List, indexed, tc.WantAnchor),
-				rankOf(vecList, indexed, tc.WantAnchor),
-				rankOf(ranked, indexed, tc.WantAnchor),
-				tc.Query, tc.WantAnchor, len(bm25List))
+			t.Logf("[bm25=%-3d vec=%-3d l0fused=%-3d expanded=%-3d] %s  (want %q, l1 hits=%d)",
+				rankOf(poolRes.BML0, indexed, tc.WantAnchor),
+				rankOf(poolRes.VecL0, indexed, tc.WantAnchor),
+				rankOf(poolRes.RankedL0, indexed, tc.WantAnchor),
+				rankOfSection(expanded, tc.WantAnchor),
+				tc.Query, tc.WantAnchor, len(poolRes.TopL1))
+		}
+		// The two numbers Service.chat denies on. They decide whether a query
+		// retrieves anything on its own, which is what any "should this turn
+		// carry context?" rule has to key off — and they were invisible here.
+		t.Logf("[gate bm25=%6.2f cos=%.3f deny=%-5v] %-14s %s",
+			poolRes.GateBM25, poolRes.GateCosine,
+			poolRes.GateBM25 < minThreshold && poolRes.GateCosine < cosineMin, tc.Shape, tc.Query)
+		if len(tc.Prior) > 0 {
+			// The string that was actually ranked, not the one that was asked.
+			t.Logf("[%s] ranked %q", tc.Shape, retrievalQuery)
 		}
 		t.Logf("[step=%-5v area=%-5v] %-22s -> %v", hitStep, hitArea, tc.Query, anchors)
 	}
@@ -219,15 +311,112 @@ func TestRetrievalProbe(t *testing.T) {
 	fmt.Printf("with a 步驟 section in top-%d : %d / %d\n", topK, stepHits, len(probeQueries))
 	fmt.Printf("reaching the expected area   : %d / %d\n", areaHits, areaAsked)
 	fmt.Printf("boilerplate slots of %d      : %d\n", total, boilerplate)
+	if len(shapeOrder) > 1 {
+		fmt.Printf("-- by shape --\n")
+		for _, shape := range shapeOrder {
+			s := shapes[shape]
+			fmt.Printf("%-28s : %d / %d\n", shape, s.hits, s.asked)
+		}
+	}
 	fmt.Printf("=========================\n")
 }
 
+func TestDistilledChatLive(t *testing.T) {
+	t.Chdir("../..")
+	cfg, err := config.LoadKB()
+	if err != nil {
+		t.Fatalf("config.LoadKB() error = %v", err)
+	}
+
+	oai := NewOpenAIClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, cfg.OpenAI.EmbedBaseURL, cfg.OpenAI.EmbedAPIKey, cfg.OpenAI.GeminiThinkingLevel, cfg.OpenAI.ChatModel, cfg.OpenAI.EmbedModel)
+	svc := NewService(NewMarkdownRepo(cfg.KB.DocsDir, cfg.KB.IndexDir), oai, oai, NewVectorRepo(cfg.KB.IndexDir), NewInProcStore(), cfg.OpenAI.EmbedModel)
+
+	ctx := context.Background()
+	if err := svc.LoadOnStartup(ctx); err != nil {
+		if errors.Is(err, ErrNotIndexed) || errors.Is(err, ErrIndexStale) {
+			t.Log("re-indexing corpus...")
+			if _, _, err := svc.Index(ctx); err != nil {
+				t.Fatalf("svc.Index() error = %v", err)
+			}
+		} else {
+			t.Fatalf("LoadOnStartup() error = %v", err)
+		}
+	}
+
+	principal := FullAccessPrincipal(AnonymousOwner)
+	queries := []string{
+		"對套餐頭點選數量增加會發生甚麼事",
+		// Notion「自然語句回歸集」那張表的全部六題，一次量完再改文件。
+		"如何暫存訂單?",
+		"如何作廢訂單?",
+		"如何重印發票?",
+		"怎麼看營業報表?",
+		"如何結帳?",
+		"今天台北天氣如何?",
+	}
+
+	for _, query := range queries {
+		answer, _, metrics, err := svc.ChatWithMetrics(ctx, principal, query, "")
+		if err != nil {
+			t.Fatalf("ChatWithMetrics(%q) error = %v", query, err)
+		}
+		t.Logf("=== QUERY: %s ===", query)
+		t.Logf("  Grounded: %v", answer.Grounded())
+		t.Logf("  Answer: %s", answer.Text())
+		t.Logf("  Sources (%d):", len(answer.Sources()))
+		for _, src := range answer.Sources() {
+			t.Logf("    - %s", src)
+		}
+		t.Logf("  Metrics: bm25Max=%.2f bestCosine=%.3f", metrics.BM25Max, metrics.BestCosine)
+	}
+}
+
 type evalProbeRow struct {
-	Question         string `json:"q"`
-	Kind             string `json:"kind"`
-	MustNotInfer     bool   `json:"mni"`
-	Grounded         bool   `json:"grounded"`
-	ExpectedSourceID string `json:"expected_source_id"`
+	Question            string   `json:"q"`
+	EngineeringQuestion string   `json:"question"`
+	Kind                string   `json:"kind"`
+	MustNotInfer        bool     `json:"mni"`
+	Grounded            bool     `json:"grounded"`
+	ExpectedSourceID    string   `json:"expected_source_id"`
+	ExpectedSource      string   `json:"expect_source"`
+	ExpectAny           []string `json:"expect_any"`
+}
+
+func (r evalProbeRow) normalize() evalProbeRow {
+	if r.Question == "" {
+		r.Question = r.EngineeringQuestion
+	}
+	if r.Kind == "must_not_infer" {
+		r.MustNotInfer = true
+	}
+	return r
+}
+
+func TestEvalProbeRowNormalizesChatAndEngineeringSchemas(t *testing.T) {
+	input := `[
+		{"q":"如何結帳?","kind":"D","mni":false,"expected_source_id":"Store.POS--ui-checkout"},
+		{"question":"點餐-列印狀態的呼叫鏈經過哪些方法?","kind":"callchain","expect_source":"Printing_Config-procedure","expect_any":["OnDisableCheckout"]},
+		{"question":"會員點數會打哪支 API?","kind":"must_not_infer"}
+	]`
+	var rows []evalProbeRow
+	if err := json.Unmarshal([]byte(input), &rows); err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+	for i := range rows {
+		rows[i] = rows[i].normalize()
+	}
+	if got := rows[0].Question; got != "如何結帳?" {
+		t.Errorf("chat question = %q", got)
+	}
+	if got := rows[1].Question; got != "點餐-列印狀態的呼叫鏈經過哪些方法?" {
+		t.Errorf("engineering question = %q", got)
+	}
+	if rows[1].ExpectedSource != "Printing_Config-procedure" || len(rows[1].ExpectAny) != 1 {
+		t.Errorf("engineering truth = source %q, symbols %v", rows[1].ExpectedSource, rows[1].ExpectAny)
+	}
+	if !rows[2].MustNotInfer {
+		t.Error("engineering must_not_infer kind was not normalized")
+	}
 }
 
 type evalProbeStat struct {
@@ -269,6 +458,17 @@ func answerRank(sections []Section, target string) int {
 	return 0
 }
 
+func answerRankAny(sections []Section, targets []string) int {
+	for i, sec := range sections {
+		for _, target := range targets {
+			if target != "" && strings.Contains(sec.Body(), target) {
+				return i + 1
+			}
+		}
+	}
+	return 0
+}
+
 func runEvalRetrievalProbe(t *testing.T, ctx context.Context, oai *OpenAIClient,
 	indexed []Section, corpus Corpus, vecMap map[string][]float32, evalPath string) {
 	b, err := os.ReadFile(evalPath)
@@ -280,7 +480,8 @@ func runEvalRetrievalProbe(t *testing.T, ctx context.Context, oai *OpenAIClient,
 		t.Fatalf("decode eval output: %v", err)
 	}
 	failed := make([]evalProbeRow, 0)
-	for _, row := range rows {
+	for _, raw := range rows {
+		row := raw.normalize()
 		if !row.MustNotInfer && !row.Grounded && row.Question != "" {
 			failed = append(failed, row)
 		}
@@ -317,7 +518,9 @@ func runEvalRetrievalProbe(t *testing.T, ctx context.Context, oai *OpenAIClient,
 		if len(bm25List) > candidateK {
 			bm25List = bm25List[:candidateK]
 		}
-		vecList := RankVector(indexed, vecMap, vectors[i], candidateK)
+		vecList := RankVector(indexed, vecMap, vectors[i], candidateK, func(section Section) bool {
+			return CanSee(FullAccessPrincipal(AnonymousOwner), section)
+		})
 		ranked := bm25List
 		if len(vecList) > 0 && len(bm25List) > 0 {
 			ranked = FuseRRF([][]ScoredSection{bm25List, vecList}, rrfK)
@@ -326,9 +529,9 @@ func runEvalRetrievalProbe(t *testing.T, ctx context.Context, oai *OpenAIClient,
 		}
 
 		expectedPath := evalSourcePath(row.ExpectedSourceID)
-		if containsExpectedPath(topSections(indexed, ranked, probeFileTopK), expectedPath) {
+		if containsExpectedSource(topSections(indexed, ranked, probeFileTopK), expectedPath, row.ExpectedSource) {
 			stat.top3++
-		} else if containsExpectedPath(topSections(indexed, ranked, candidateK), expectedPath) {
+		} else if containsExpectedSource(topSections(indexed, ranked, candidateK), expectedPath, row.ExpectedSource) {
 			stat.top20++
 		} else {
 			stat.miss++
@@ -338,11 +541,19 @@ func runEvalRetrievalProbe(t *testing.T, ctx context.Context, oai *OpenAIClient,
 		if m := quotedTarget.FindStringSubmatch(row.Question); m != nil {
 			target = m[1]
 		}
-		if target == "" {
+		targets := row.ExpectAny
+		if target != "" {
+			targets = []string{target}
+		}
+		if len(targets) == 0 {
 			continue
 		}
 		stat.answerable++
-		rank := answerRank(topSections(indexed, ranked, candidateK), target)
+		rank := answerRankAny(topSections(indexed, ranked, candidateK), targets)
+		t.Logf("[kind=%s expected-file=%q file-top-%d=%v symbol-rank=%d] %s",
+			row.Kind, firstNonEmpty(expectedPath, row.ExpectedSource), probeFileTopK,
+			containsExpectedSource(topSections(indexed, ranked, probeFileTopK), expectedPath, row.ExpectedSource),
+			rank, row.Question)
 		if rank == 0 {
 			stat.answerMiss++
 			continue
@@ -379,6 +590,15 @@ func runEvalRetrievalProbe(t *testing.T, ctx context.Context, oai *OpenAIClient,
 	fmt.Printf("topK is currently %d — raising it only helps for questions already covered above.\n", topK)
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func evalSourcePath(id string) string {
 	team, rest, ok := strings.Cut(id, "--")
 	if !ok {
@@ -394,13 +614,16 @@ func evalSourcePath(id string) string {
 	return ""
 }
 
-func containsExpectedPath(sections []Section, expectedPath string) bool {
-	if expectedPath == "" {
+func containsExpectedSource(sections []Section, expectedPath, expectedFragment string) bool {
+	if expectedPath == "" && expectedFragment == "" {
 		return false
 	}
 	for _, section := range sections {
 		file := strings.ReplaceAll(section.File(), "\\", "/")
-		if file == expectedPath || strings.HasSuffix(file, "/"+expectedPath) {
+		if expectedPath != "" && (file == expectedPath || strings.HasSuffix(file, "/"+expectedPath)) {
+			return true
+		}
+		if expectedFragment != "" && strings.Contains(file, expectedFragment) {
 			return true
 		}
 	}

@@ -15,6 +15,10 @@ coverage.html
 .env.local
 .env.openai
 
+# Local bearer-token store
+/auth.json
+/auth.json.lock
+
 # Generated knowledge-base index (rebuilt by POST /index; holds a full copy of docs/)
 .kb/
 log/
@@ -42,6 +46,20 @@ Thumbs.db
 
 docs/
 eval/
+
+# 公司語料衍生的測試資料 —— 題目與預期答案直接引用 POS 業務規則,
+# 與 docs/ 同樣不進版控。本機保留,由 bundle 重建。
+/testdata/
+/internal/kb/testdata/
+
+# eval 執行結果 —— 連模型答案與引用的 corpus 片段都存了,比題庫更敏感
+/metrics/
+
+# 來源清單含內部絕對路徑;範本見 kb_sources.json.example
+/kb_sources.json
+
+# 驗收查詢語句
+/postman/
 # 錨在根目錄:不加斜線會連 .claude/skills/*/templates/run_eval.py 一起擋掉
 /run_eval.py
 /eval_out.json
