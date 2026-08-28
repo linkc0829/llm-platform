@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/openai/openai-go"
 )
@@ -125,6 +127,76 @@ func TestHandlerChatMapsTransientLLMErrors(t *testing.T) {
 			}
 			if strings.Contains(w.Body.String(), "429") || strings.Contains(w.Body.String(), "502") {
 				t.Errorf("response leaks upstream detail: %s", w.Body.String())
+			}
+		})
+	}
+}
+
+// Two acceptance runs could not answer "does the upstream send Retry-After?"
+// because the only evidence lived on a console nobody captured. These fields
+// move that answer into the log, where it survives the run.
+func TestChatFailureLogsUpstreamClassAndRetryAfter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name           string
+		chatErr        error
+		wantClass      string
+		wantRetryAfter string
+		wantFields     bool
+	}{
+		{
+			name:           "quota_stall_records_the_hint_it_was_given",
+			chatErr:        fmt.Errorf("llm answer: %w", NewLLMTransientError(ErrLLMRateLimited, "37", errors.New("429"))),
+			wantClass:      ErrLLMRateLimited.Error(),
+			wantRetryAfter: "37",
+			wantFields:     true,
+		},
+		{
+			// The empty value is the finding: the upstream sent no hint, so
+			// honouring it cannot help and only a lower request rate will.
+			name:           "quota_stall_without_a_hint_records_an_empty_one",
+			chatErr:        fmt.Errorf("llm answer: %w", NewLLMTransientError(ErrLLMRateLimited, "", errors.New("429"))),
+			wantClass:      ErrLLMRateLimited.Error(),
+			wantRetryAfter: "",
+			wantFields:     true,
+		},
+		{
+			name:       "unclassified_failure_adds_no_upstream_fields",
+			chatErr:    errors.New("boom"),
+			wantFields: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, logs := observer.New(zap.ErrorLevel)
+			r := gin.New()
+			RegisterRoutes(r.Group(""), &Handler{svc: &fakeHandlerService{chatErr: tt.chatErr}, logger: zap.New(core), principal: AnonymousPrincipal},
+				RouteGuards{AllowUnauthenticated: true})
+
+			req := httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(`{"query":"how do I void an order?"}`))
+			req.Header.Set("Content-Type", "application/json")
+			r.ServeHTTP(httptest.NewRecorder(), req)
+
+			entries := logs.FilterMessage("chat failed").All()
+			if len(entries) != 1 {
+				t.Fatalf("chat failed entries = %d, want 1", len(entries))
+			}
+			fields := entries[0].ContextMap()
+			class, hasClass := fields["upstream_class"]
+			after, hasAfter := fields["upstream_retry_after"]
+			if hasClass != tt.wantFields || hasAfter != tt.wantFields {
+				t.Fatalf("upstream fields present = (%t, %t), want %t", hasClass, hasAfter, tt.wantFields)
+			}
+			if !tt.wantFields {
+				return
+			}
+			if class != tt.wantClass {
+				t.Errorf("upstream_class = %v, want %q", class, tt.wantClass)
+			}
+			if after != tt.wantRetryAfter {
+				t.Errorf("upstream_retry_after = %v, want %q", after, tt.wantRetryAfter)
 			}
 		})
 	}
