@@ -2,7 +2,9 @@ package kb
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 
@@ -129,7 +131,7 @@ func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Sect
 	}
 	completion, err := o.client.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return "", fmt.Errorf("openai chat: %w", err)
+		return "", classifyLLMError(fmt.Errorf("openai chat: %w", err))
 	}
 	// Token counts exist only on the response, and the LLM port returns a bare
 	// string — so they are logged here rather than plumbed up through it. Nothing
@@ -202,4 +204,32 @@ func groundedPrompt(query string, sections []Section) string {
 	b.WriteString("\nQuestion: ")
 	b.WriteString(query)
 	return b.String()
+}
+
+// classifyLLMError tags upstream failures the caller should retry rather than
+// treat as a broken request. Only the adapter knows the SDK error shape, so the
+// translation to package sentinels happens here and the handler stays free of
+// SDK types.
+func classifyLLMError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return NewLLMTransientError(ErrLLMUnavailable, "", err)
+	}
+	var apiErr *openai.Error
+	if !errors.As(err, &apiErr) {
+		return err
+	}
+	switch {
+	case apiErr.StatusCode == http.StatusTooManyRequests:
+		return NewLLMTransientError(ErrLLMRateLimited, upstreamRetryAfter(apiErr), err)
+	case apiErr.StatusCode >= 500:
+		return NewLLMTransientError(ErrLLMUnavailable, upstreamRetryAfter(apiErr), err)
+	}
+	return err
+}
+
+func upstreamRetryAfter(apiErr *openai.Error) string {
+	if apiErr.Response == nil {
+		return ""
+	}
+	return apiErr.Response.Header.Get("Retry-After")
 }

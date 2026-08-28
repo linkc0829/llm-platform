@@ -103,7 +103,22 @@ func writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "query is required"})
 	case errors.Is(err, ErrSessionOwnerMismatch):
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+	case errors.Is(err, ErrLLMRateLimited):
+		setRetryAfter(c, err)
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "upstream rate limited"})
+	case errors.Is(err, ErrLLMUnavailable):
+		setRetryAfter(c, err)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "upstream temporarily unavailable"})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+	}
+}
+
+// setRetryAfter echoes the upstream backoff hint when there is one. No header
+// is emitted otherwise; clients back off on their own schedule rather than one
+// this service invented.
+func setRetryAfter(c *gin.Context, err error) {
+	if after := RetryAfterOf(err); after != "" {
+		c.Header("Retry-After", after)
 	}
 }

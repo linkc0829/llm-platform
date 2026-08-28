@@ -12,6 +12,7 @@
 """
 import collections
 import concurrent.futures
+import email.utils
 import glob
 import json
 import os
@@ -22,6 +23,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 
 # ===== 設定 =====
 KB_URL = "http://localhost:12598/chat"     # 對齊 .env 的 APP_PORT
@@ -45,6 +47,10 @@ _RATE_LOCK = threading.Lock()
 _NEXT_REQUEST_AT = 0.0
 EVAL_OUT = os.getenv("KB_EVAL_OUT", "eval_out.json")
 RETRYABLE_HTTP_STATUS = {408, 429, 500, 502, 503, 504}
+# 上游配額是以分鐘為單位刷新的,1s/2s 指數退避會把三次嘗試全花在同一個已耗盡的
+# 窗口裡 —— 606 題實測因此掉了 30 題。有 Retry-After 就聽上游的。上限是防呆:
+# 一個寫錯或惡意的 header 不該讓整套驗收停擺,超過就跳過該題比睡一小時有用。
+RETRY_AFTER_CAP_SECONDS = float(os.getenv("KB_EVAL_RETRY_AFTER_CAP", "120"))
 # 續跑前必須存在的欄位。判分邏輯一改就在這裡加名字,舊 checkpoint 才會被拒絕。
 CHECKPOINT_ROW_KEYS = ("src_ok", "src_scored", "src_from_answer")
 # ================
@@ -55,13 +61,36 @@ except Exception:
     pass
 
 
-def _retry_delay(error, attempt):
-    retry_after = error.headers.get("Retry-After") if error.headers else None
-    if retry_after:
-        try:
-            return max(0.0, float(retry_after))
-        except ValueError:
-            pass
+def retry_after_seconds(error):
+    """上游要求等待的秒數;沒說就回 None。
+
+    Retry-After 允許秒數或 HTTP-date 兩種寫法,上游送哪一種不是我們能決定的,
+    所以兩種都收。過期的 date 回 0 而不是負數。
+    """
+    response_headers = getattr(error, "headers", None)
+    raw = response_headers.get("Retry-After") if response_headers else None
+    if not raw:
+        return None
+    raw = raw.strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        pass
+    try:
+        when = email.utils.parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return None
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+
+def _retry_delay(attempt, hint):
+    if hint is not None:
+        # 每個 worker 拿到同一個 hint,窗口一開會同時湧上去;併發時錯開一點。
+        return hint + (random.uniform(0, 0.5) if CONCURRENCY > 1 else 0.0)
     delay = BACKOFF_SECONDS * (2 ** (attempt - 1))
     # Avoid a group of workers retrying the same upstream failure at once.
     return delay + random.uniform(0, min(0.5, delay * 0.25))
@@ -98,8 +127,14 @@ def ask(q):
         except urllib.error.HTTPError as error:
             if error.code not in RETRYABLE_HTTP_STATUS or attempt == MAX_ATTEMPTS:
                 raise
-            delay = _retry_delay(error, attempt)
-            print(f"  retry {attempt}/{MAX_ATTEMPTS - 1}: HTTP {error.code}; sleep {delay:g}s", file=sys.stderr)
+            hint = retry_after_seconds(error)
+            if hint is not None and hint > RETRY_AFTER_CAP_SECONDS:
+                print(f"  HTTP {error.code}: 上游要求等 {hint:.0f}s,超過 "
+                      f"{RETRY_AFTER_CAP_SECONDS:.0f}s 上限,跳過此題", file=sys.stderr)
+                raise
+            delay = _retry_delay(attempt, hint)
+            source = "Retry-After" if hint is not None else "backoff"
+            print(f"  retry {attempt}/{MAX_ATTEMPTS - 1}: HTTP {error.code}; sleep {delay:g}s ({source})", file=sys.stderr)
             time.sleep(delay)
         except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
             if attempt == MAX_ATTEMPTS:
@@ -116,6 +151,30 @@ def is_skippable_error(error):
     if isinstance(error, urllib.error.HTTPError):
         return error.code in RETRYABLE_HTTP_STATUS
     return isinstance(error, (urllib.error.URLError, TimeoutError, ConnectionError))
+
+
+def _selftest():
+    class FakeError:
+        def __init__(self, value):
+            self.headers = {"Retry-After": value} if value is not None else {}
+
+    assert retry_after_seconds(FakeError(None)) is None
+    assert retry_after_seconds(FakeError("")) is None
+    assert retry_after_seconds(FakeError("not-a-date")) is None
+    assert retry_after_seconds(FakeError(" 37 ")) == 37.0
+    assert retry_after_seconds(FakeError("-5")) == 0.0
+    future = email.utils.format_datetime(datetime.now(timezone.utc) + timedelta(seconds=45))
+    assert 30 <= retry_after_seconds(FakeError(future)) <= 60
+    past = email.utils.format_datetime(datetime.now(timezone.utc) - timedelta(seconds=45))
+    assert retry_after_seconds(FakeError(past)) == 0.0
+    assert _retry_delay(1, 37.0) >= 37.0
+    assert _retry_delay(3, None) < 10
+    print("run_eval selftest: PASS")
+
+
+if "--selftest" in sys.argv:
+    _selftest()
+    sys.exit(0)
 
 
 def check_binary_freshness(start):
