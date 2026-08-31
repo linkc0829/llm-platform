@@ -1,4 +1,4 @@
-module github.com/linkc0829/go-knowledge-base-qa-bot
+module github.com/linkc0829/llm-platform
 
 go 1.25.0
 

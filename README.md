@@ -116,7 +116,7 @@ Missing or invalid bearer tokens intentionally return 401 without WWW-Authentica
     "knowledge-base": {
       "command": "go",
       "args": ["run", "./cmd/kbmcp"],
-      "cwd": "C:\\path\\to\\knowledge-base-qa-bot"
+      "cwd": "C:\\path\\to\\llm-platform"
     }
   }
 }

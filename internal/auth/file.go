@@ -15,7 +15,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/shared"
+	"github.com/linkc0829/llm-platform/internal/shared"
 )
 
 const (

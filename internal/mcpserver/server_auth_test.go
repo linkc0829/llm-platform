@@ -9,9 +9,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.uber.org/zap"
 
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/auth"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/shared"
+	"github.com/linkc0829/llm-platform/internal/auth"
+	"github.com/linkc0829/llm-platform/internal/kb"
+	"github.com/linkc0829/llm-platform/internal/shared"
 )
 
 type mcpTestResolver struct{}

@@ -11,13 +11,13 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/auth"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/bootstrap"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/mcpserver"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/config"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/httpserver"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/logger"
+	"github.com/linkc0829/llm-platform/internal/auth"
+	"github.com/linkc0829/llm-platform/internal/bootstrap"
+	"github.com/linkc0829/llm-platform/internal/kb"
+	"github.com/linkc0829/llm-platform/internal/mcpserver"
+	"github.com/linkc0829/llm-platform/internal/platform/config"
+	"github.com/linkc0829/llm-platform/internal/platform/httpserver"
+	"github.com/linkc0829/llm-platform/internal/platform/logger"
 )
 
 func main() {

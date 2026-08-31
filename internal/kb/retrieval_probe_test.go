@@ -25,7 +25,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/config"
+	"github.com/linkc0829/llm-platform/internal/platform/config"
 )
 
 // probeQueries are the "how do I X" questions that motivated the change: every

@@ -40,7 +40,7 @@ linters-settings:
             desc: "Domain must not depend on web frameworks"
           - pkg: "github.com/golang-jwt/jwt"
             desc: "Domain must not depend on auth libraries"
-          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform"
+          - pkg: "github.com/linkc0829/llm-platform/internal/platform"
             desc: "Domain must not depend on platform code"
 
       # ------------------------------------------------------------------
@@ -79,7 +79,7 @@ linters-settings:
           - "**/internal/kb/*.go"
           - "!**/internal/kb/*_test.go"
         deny:
-          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/auth"
+          - pkg: "github.com/linkc0829/llm-platform/internal/auth"
             desc: "kb must consume shared principal values, not auth feature implementation"
 
       no-cross-feature-kb:
@@ -87,7 +87,7 @@ linters-settings:
           - "**/internal/auth/*.go"
           - "!**/internal/auth/*_test.go"
         deny:
-          - pkg: "github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
+          - pkg: "github.com/linkc0829/llm-platform/internal/kb"
             desc: "auth must not depend on kb feature implementation"
 
 
