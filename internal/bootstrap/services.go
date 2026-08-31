@@ -1,9 +1,9 @@
 package bootstrap
 
 import (
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/auth"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/config"
+	"github.com/linkc0829/llm-platform/internal/auth"
+	"github.com/linkc0829/llm-platform/internal/kb"
+	"github.com/linkc0829/llm-platform/internal/platform/config"
 )
 
 // Services holds the composition-root snapshots shared by the HTTP adapters.

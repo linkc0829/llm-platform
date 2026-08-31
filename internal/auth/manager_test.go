@@ -11,7 +11,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/lockfile"
+	"github.com/linkc0829/llm-platform/internal/platform/lockfile"
 )
 
 func TestStoreCreatePersistsAndResolvesImmediately(t *testing.T) {

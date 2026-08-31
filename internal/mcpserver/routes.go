@@ -7,7 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/auth"
+	"github.com/linkc0829/llm-platform/internal/auth"
 )
 
 // RegisterStreamableHTTPRoutes registers the MCP HTTP endpoints and owns the

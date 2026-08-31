@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/shared"
+	"github.com/linkc0829/llm-platform/internal/shared"
 )
 
 var requiredMetadata = []string{"id", "team", "product", "doc_type", "version", "access_level", "owner", "last_reviewed"}

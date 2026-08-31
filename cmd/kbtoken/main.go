@@ -16,9 +16,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/auth"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/config"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/logger"
+	"github.com/linkc0829/llm-platform/internal/auth"
+	"github.com/linkc0829/llm-platform/internal/platform/config"
+	"github.com/linkc0829/llm-platform/internal/platform/logger"
 )
 
 const cliActorID = "kbtoken"

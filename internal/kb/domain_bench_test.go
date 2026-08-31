@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/config"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/shared"
+	"github.com/linkc0829/llm-platform/internal/platform/config"
+	"github.com/linkc0829/llm-platform/internal/shared"
 )
 
 // These benchmarks answer one question: is the per-query work that Service.chat

@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/atomicfile"
+	"github.com/linkc0829/llm-platform/internal/platform/atomicfile"
 )
 
 // Vectors are stored as little-endian float32, not JSON.

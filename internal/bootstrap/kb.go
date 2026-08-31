@@ -4,8 +4,8 @@ package bootstrap
 import (
 	"strings"
 
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/config"
+	"github.com/linkc0829/llm-platform/internal/kb"
+	"github.com/linkc0829/llm-platform/internal/platform/config"
 )
 
 // NewKBService constructs the shared KB service for HTTP and MCP entrypoints.

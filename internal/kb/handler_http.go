@@ -9,7 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/shared"
+	"github.com/linkc0829/llm-platform/internal/shared"
 )
 
 // service is the local inbound interface the handler depends on.

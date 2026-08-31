@@ -13,8 +13,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/kb"
-	"github.com/linkc0829/go-knowledge-base-qa-bot/internal/platform/atomicfile"
+	"github.com/linkc0829/llm-platform/internal/kb"
+	"github.com/linkc0829/llm-platform/internal/platform/atomicfile"
 )
 
 type options struct {
