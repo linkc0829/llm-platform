@@ -174,7 +174,20 @@ func (s *Service) chat(ctx context.Context, principal shared.Principal, query, s
 
 	var vecList []ScoredSection
 	if s.embedder != nil && len(vecMap) > 0 {
-		if vectors, err := s.embedder.Embed(ctx, []string{contextualQuery}); err == nil && len(vectors) > 0 {
+		// Falling back to BM25 is the right answer for a live query — a rate-limited
+		// embedder should not turn into a failed request. Swallowing the reason is
+		// not: a 606-question run came back with two queries silently downgraded to
+		// strategy=markdown (best_cosine exactly 0 against a 0.83 median), and the
+		// only evidence left was that field, which reads identically whether the
+		// endpoint refused, timed out, or the section simply had no vector. Log it
+		// so the degrade can be counted and explained, and keep serving.
+		vectors, err := s.embedder.Embed(ctx, []string{contextualQuery})
+		switch {
+		case err != nil:
+			zap.L().Warn("query_embed_failed", zap.Error(err), zap.String("q", query))
+		case len(vectors) == 0:
+			zap.L().Warn("query_embed_empty", zap.String("q", query))
+		default:
 			vecList = RankVector(indexed, vecMap, vectors[0], len(indexed), allow)
 		}
 	}

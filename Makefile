@@ -24,6 +24,12 @@ build: ## Build kb, kbmcp and kbtoken into bin/
 	go build -o $(BUILD_DIR)/kbmcp$(EXE) ./cmd/kbmcp
 	go build -o $(BUILD_DIR)/kbtoken$(EXE) ./cmd/kbtoken
 
+prompt-check: ## Compare the built binaries' grounding prompt against the running service
+	@echo "source : $$(go run ./cmd/kb -fingerprint)"
+	@echo "kb     : $$($(BUILD_DIR)/$(BINARY_NAME)$(EXE) -fingerprint)"
+	@echo "kbmcp  : $$($(BUILD_DIR)/kbmcp$(EXE) -fingerprint)"
+	@echo "service: $$(curl -s http://localhost:$(or $(PORT),12598)/health)"
+
 run: ## Run kb locally (needs $$env:KB_AUTH_FILE, or KB_AUTH_DISABLED=true)
 	go run ./cmd/kb
 

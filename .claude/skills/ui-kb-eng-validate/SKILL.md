@@ -69,6 +69,20 @@ codebase-verify 之前的猜測,拿它當真值等於用幻覺驗幻覺 —— s
 
 先 `go build -o bin/kbmcp.exe ./cmd/kbmcp`，再直接執行：
 
+> ⚠️ **這裡的風險是陳舊的檔案,不是陳舊的行程。** runner 每次都重新 spawn
+> `bin/kbmcp.exe`,所以沒有「忘了重啟」的問題 —— 但忘了重編一樣會靜默量到上一版的
+> `groundingSystem`／`topK`／`minThreshold`(全是編譯期常數)。姊妹 skill
+> `ui-kb-validate` 就因為這類陳舊量測連續四輪得到錯誤結論。
+>
+> ```powershell
+> go build -o bin/kbmcp.exe ./cmd/kbmcp
+> make prompt-check      # source / kb / kbmcp 三行指紋必須一致
+> ```
+>
+> `kbmcp` 那行與 `source` 不同就是沒重編。(`service` 那行是 HTTP 服務的,本 skill
+> 走 stdio,不必理會。)指紋是 grounding 指令的 sha256 前 12 碼,它一變就代表模型
+> 收到的規則變了,舊 metrics 不能拿來比較。
+
 ```powershell
 python templates/run_eng_eval.py --pace 6 --retries 3
 ```
@@ -87,6 +101,29 @@ python templates/run_eng_eval.py --scope source --kb C:\Protech\wpf-replay\kb
 ```
 
 可用 `--out C:\tmp\eng-eval-round1.json` 指定結果檔，避免兩輪共用 checkpoint。
+
+改過 prompt 或解碼參數之後，**第一輪要當熱身丟掉**：vLLM 的 prefix cache 冷啟動與
+命中走不同數值路徑，改完 prompt 的 round 1 與其後每一輪都不同且不可重現（姊妹 skill
+實測 round 1 = 34/36、round 2 = 32/36，數小時後重問全部逐字重現 round 2 ——
+**分數較高的那輪才是假的**）。跑三輪、採計後兩輪。
+
+**這支 skill 是少數併發划算的例外，但基準比較仍要單 worker。** 多個 worker 平行打同
+一個服務會改變 vLLM 的 batch 組成，數值跟著變，argmax 在 top-1 與 top-2 幾乎平手的
+位置翻面。這裡的題目是 symbol／API／ViewModel 查詢，屬於高信心生成，離平手很遠——
+實測 120 題、3 workers × 20 RPM、兩輪 **0 判定差異**，所以拿併發換時間是對的。
+
+姊妹 skill 的判讀題就不是：同樣 3 workers，36 題只有 13 題逐字相同、3 題 unstable，
+單線重跑則是 36/36、0 unstable。**要拿一輪的分數去跟另一輪比，兩輪的 worker 數必須
+相同**，否則併發本身就是一個沒被記錄的變因——實測有一輪同時換了 prompt 與 worker 數，
+兩個變因，什麼都歸因不了，整輪重跑。
+
+穩定度看**判定**不看文字：後兩輪每題的 `ok` 與 `grounded` 要一致，逐字相同是更強的
+訊號但不是 gate。拒答的措辭本來就會漂（姊妹 skill 實測 36 題有 7 題文字不同，7 題全是
+拒答，其餘 29 題逐字相同，sources 完全一致）——拒答是模型最沒把握的位置，top-1 與
+top-2 幾乎平手。**措辭漂移不是不穩定，判定翻面才是。**
+
+`temperature` 沒釘住的話這段不成立：預設會落回模型自己的 `generation_config`
+（Gemma 是 1.0），unstable 全是取樣雜訊。`.env` 設 `KB_CHAT_TEMPERATURE=0`。
 
 `kbmcp` 只讀環境變數、不自己載 `.env`,而且 `KB_INDEX_DIR` 是相對路徑。
 runner 因此代為載入 `ENV_FILE` 並以 repo 根目錄當 cwd 啟動子程序 ——

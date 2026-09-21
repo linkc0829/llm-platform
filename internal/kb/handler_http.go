@@ -20,13 +20,14 @@ type service interface {
 }
 
 type Handler struct {
-	svc       service
-	logger    *zap.Logger
-	principal func(*gin.Context) shared.Principal
+	svc        service
+	logger     *zap.Logger
+	principal  func(*gin.Context) shared.Principal
+	chatConfig *ChatConfig
 }
 
-func NewHandler(svc *Service, logger *zap.Logger, principal func(*gin.Context) shared.Principal) *Handler {
-	return &Handler{svc: svc, logger: logger, principal: principal}
+func NewHandler(svc *Service, logger *zap.Logger, principal func(*gin.Context) shared.Principal, chat *ChatConfig) *Handler {
+	return &Handler{svc: svc, logger: logger, principal: principal, chatConfig: chat}
 }
 
 // AnonymousPrincipal is the explicit full-access principal for unauthenticated
@@ -36,7 +37,7 @@ func AnonymousPrincipal(*gin.Context) shared.Principal {
 }
 
 func (h *Handler) health(c *gin.Context) {
-	c.JSON(http.StatusOK, HealthResponse{Status: "ok"})
+	c.JSON(http.StatusOK, HealthResponse{Status: "ok", Chat: h.chatConfig})
 }
 
 // ponytail: public local-tool endpoint; add rate limiting before exposing beyond localhost.

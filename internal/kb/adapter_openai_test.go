@@ -39,7 +39,7 @@ func TestOpenAIClientEmbedBatchesRequests(t *testing.T) {
 	for i := range texts {
 		texts[i] = fmt.Sprintf("text-%d", i)
 	}
-	client := NewOpenAIClient("test", server.URL+"/v1", "", "", "", "chat", "embed")
+	client := NewOpenAIClient("test", server.URL+"/v1", "", "", "", "chat", "embed", ChatOptions{})
 	vectors, err := client.Embed(context.Background(), texts)
 	if err != nil {
 		t.Fatalf("Embed() error = %v, want nil", err)
@@ -84,7 +84,7 @@ func TestOpenAIClientUsesSeparateEmbeddingAPIKey(t *testing.T) {
 	}))
 	t.Cleanup(embed.Close)
 
-	client := NewOpenAIClient("chat-key", chat.URL+"/v1", embed.URL+"/v1", "embed-key", "", "chat", "embed")
+	client := NewOpenAIClient("chat-key", chat.URL+"/v1", embed.URL+"/v1", "embed-key", "", "chat", "embed", ChatOptions{})
 	if _, err := client.Answer(context.Background(), "question", nil, nil); err != nil {
 		t.Fatalf("Answer() error = %v", err)
 	}
@@ -103,7 +103,7 @@ func TestOpenAIClientEmbeddingAPIKeyFallsBackToChatAPIKey(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client := NewOpenAIClient("chat-key", "", server.URL+"/v1", "", "", "chat", "embed")
+	client := NewOpenAIClient("chat-key", "", server.URL+"/v1", "", "", "chat", "embed", ChatOptions{})
 	if _, err := client.Embed(context.Background(), []string{"text"}); err != nil {
 		t.Fatalf("Embed() error = %v", err)
 	}
@@ -129,7 +129,7 @@ func TestOpenAIClientSendsGeminiThinkingLevel(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client := NewOpenAIClient("key", server.URL+"/v1", "", "", "minimal", "chat", "embed")
+	client := NewOpenAIClient("key", server.URL+"/v1", "", "", "minimal", "chat", "embed", ChatOptions{})
 	if _, err := client.Answer(context.Background(), "question", nil, nil); err != nil {
 		t.Fatalf("Answer() error = %v", err)
 	}
@@ -186,4 +186,43 @@ func mustSection(t *testing.T, file, heading, body string, meta map[string]strin
 		t.Fatalf("NewSection(%q, %q) error = %v, want nil", file, heading, err)
 	}
 	return section
+}
+
+// temperature=0 is the whole point of pinning decoding: the openai-go field is
+// tagged omitzero, so a plain float would drop out of the request and hand the
+// run back to the served model's own generation_config.
+func TestAnswerSendsDecodingParams(t *testing.T) {
+	tests := []struct {
+		name          string
+		options       ChatOptions
+		wantTemp      float64
+		wantMaxTokens any
+	}{
+		{name: "greedy_with_limit", options: ChatOptions{Temperature: 0, MaxTokens: 1024}, wantTemp: 0, wantMaxTokens: float64(1024)},
+		{name: "zero_max_tokens_omits_field", options: ChatOptions{Temperature: 0.2}, wantTemp: 0.2, wantMaxTokens: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var request map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Errorf("Answer() decode request = %v, want nil", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "answer"}}}})
+			}))
+			t.Cleanup(server.Close)
+
+			client := NewOpenAIClient("key", server.URL+"/v1", "", "", "", "chat", "embed", tt.options)
+			if _, err := client.Answer(context.Background(), "question", nil, nil); err != nil {
+				t.Fatalf("Answer() error = %v", err)
+			}
+			if got, ok := request["temperature"]; !ok || got != tt.wantTemp {
+				t.Errorf("temperature = %#v (present %t), want %v", got, ok, tt.wantTemp)
+			}
+			if got := request["max_tokens"]; got != tt.wantMaxTokens {
+				t.Errorf("max_tokens = %#v, want %#v", got, tt.wantMaxTokens)
+			}
+		})
+	}
 }

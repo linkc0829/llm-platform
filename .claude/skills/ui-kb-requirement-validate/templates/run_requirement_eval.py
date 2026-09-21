@@ -4,6 +4,7 @@ import argparse
 import collections
 import email.utils
 import hashlib
+import hashlib
 import json
 import os
 import random
@@ -27,8 +28,13 @@ SCORING_CONTRACT_VERSION = 2
 RETRY_AFTER_CAP_SECONDS = float(os.getenv("KB_EVAL_RETRY_AFTER_CAP", "120"))
 
 
+# Colons and CJK quotes are formatting, not content: a model that answers in a
+# bullet list writes 「購物車：清空」 for the expected 購物車清空, and quotes a UI
+# label as 「未付」金額 for 未付金額. Both scored as a wrong answer while the
+# answer was right. Stripped from expectation and answer alike, so this only
+# ever makes a term easier to find — including a must_not_include term.
 def normalized(value):
-    return re.sub(r"[\s`*_]+", "", str(value or "")).lower()
+    return re.sub(r"[\s`*_:：「」『』]+", "", str(value or "")).lower()
 
 
 def content_result(answer, expected):
@@ -164,6 +170,53 @@ def retry_after_seconds(error):
     if when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
     return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+
+def suite_fingerprint(path):
+    """Identify the exact scoring contract a run was judged against.
+
+    `source_fingerprint` pins the corpus, `chat_runtime.prompt` pins the model's
+    instructions — nothing pinned the suite, so "35/36" could not say which
+    synonym list produced it. The suite itself stays out of version control
+    (it quotes business rules verbatim, same reason as docs/), which is exactly
+    why the number has to travel with a fingerprint instead.
+    """
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:12]
+
+
+def chat_runtime(url, timeout):
+    """Read the answering model and decoding params from the service's /health.
+
+    Recorded into every round's metadata: two runs of the same suite against the
+    same corpus can still disagree because the model or its temperature changed,
+    and a metrics file that does not name them cannot tell those apart. Read from
+    the service rather than this process's env — the runner is not necessarily
+    running where the service is.
+    """
+    health = url.rsplit("/", 1)[0] + "/health"
+    try:
+        with urllib.request.urlopen(health, timeout=timeout) as response:
+            runtime = json.load(response).get("chat")
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError,
+            ConnectionError, json.JSONDecodeError) as error:
+        print(f"warning: {health} unreadable ({type(error).__name__}); "
+              "rounds will not record which model answered", file=sys.stderr)
+        return None
+    if not runtime:
+        print(f"warning: {health} reports no chat runtime (fake LLM mode, or a "
+              "service older than this field)", file=sys.stderr)
+        return runtime
+    # A rebuilt binary in bin/ looks exactly like a restarted service. Four
+    # rounds were measured against a stale process before this check existed;
+    # refuse to spend a fifth on a service that cannot even name its prompt.
+    if not runtime.get("prompt"):
+        raise SystemExit(
+            f"{health} reports no chat.prompt: this service predates the prompt "
+            "fingerprint, so a round cannot record which instructions answered "
+            "it. Rebuild and restart the service, then compare `make prompt-check`.")
+    print(f"chat runtime: {runtime['model']} prompt={runtime['prompt']} "
+          f"temperature={runtime['temperature']} max_tokens={runtime.get('max_tokens')}")
+    return runtime
 
 
 def ask(url, token, question, timeout, retries, backoff):
@@ -312,6 +365,9 @@ def run_round(cases, args, out_path, round_number):
                        "suite": args.suite,
                        "scoring_contract_version": SCORING_CONTRACT_VERSION,
                        "source_fingerprint": args.source_fingerprint,
+                       "suite_fingerprint": args.suite_fingerprint,
+                       "rpm": args.rpm,
+                       "chat_runtime": args.chat_runtime,
                    },
                    "summary": summary(rows), "rows": rows}
         atomic_json(out_path, payload)
@@ -322,7 +378,7 @@ def run_round(cases, args, out_path, round_number):
     return rows
 
 
-def analyze(rounds):
+def analyze(rounds, metadata=None):
     by_id = collections.defaultdict(list)
     for rows in rounds:
         for row in rows:
@@ -333,6 +389,7 @@ def analyze(rounds):
                      if row.get("diagnosis") == "unsafe_inference"})
     summaries = [summary(rows) for rows in rounds]
     return {
+        "metadata": metadata or {},
         "rounds": summaries,
         "unstable_case_ids": unstable,
         "unsafe_inference_case_ids": unsafe,
@@ -358,6 +415,9 @@ def selftest():
     wrong = evaluate(positive, {"grounded": True, "answer": "整包更新",
                                 "sources": ["T/reference/r-reference.md#x"]})
     assert wrong["diagnosis"] == "model_answer"
+    formatted = evaluate(positive, {"grounded": True, "answer": "- **比對**：「Data Change」後更新",
+                                    "sources": ["T/reference/r-reference.md#x"]})
+    assert formatted["ok"], formatted["missing_terms"]
     negative = {"id": "N", "area": "x", "kind": "must_not_infer",
                 "evidence_status": "missing_truth", "question": "q2",
                 "expected": {"grounded": False, "must_refuse": True,
@@ -438,6 +498,9 @@ def main():
     args.token = os.getenv("KB_EVAL_TOKEN", "").strip()
     if not args.token:
         raise SystemExit("KB_EVAL_TOKEN is required for live /chat evaluation")
+    args.suite_fingerprint = suite_fingerprint(suite_path)
+    args.chat_runtime = chat_runtime(args.url, args.timeout)
+    print(f"suite fingerprint: {args.suite_fingerprint} ({suite_path.name})")
     out_dir = Path(args.out_dir)
     if not out_dir.is_absolute():
         out_dir = repo / out_dir
@@ -446,7 +509,14 @@ def main():
     for round_number in range(1, args.rounds + 1):
         out_path = out_dir / f"{prefix}-round{round_number}.json"
         all_rows.append(run_round(cases, args, out_path, round_number))
-    report = analyze(all_rows)
+    report = analyze(all_rows, {
+        "suite": str(suite_path),
+        "suite_fingerprint": args.suite_fingerprint,
+        "source_fingerprint": args.source_fingerprint,
+        "chat_runtime": args.chat_runtime,
+        "rpm": args.rpm,
+        "rounds": args.rounds,
+    })
     analysis_path = out_dir / f"{prefix}-analysis.json"
     atomic_json(analysis_path, report)
     print(json.dumps(report, ensure_ascii=False, indent=2))

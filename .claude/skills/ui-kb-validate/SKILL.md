@@ -101,12 +101,28 @@ make run                                        # 重新編譯並啟動服務(�
 > 實測踩過:調完 prompt 跑兩輪,215/246 完全一致、0 題翻轉,結論寫成「prompt 無效,
 > 該換模型」。重啟後才發現語言指令其實生效了(英文拒答 14 → 0),先前兩輪用的是舊 binary。
 >
-> **驗證前先確認 binary 比最後一次原始碼修改新:**
+> **檔案新 ≠ 行程新。** 比對 `LastWriteTime` 只證明 bin/ 裡那顆是新的,證明不了
+> 你打的那個 port 後面跑的是它 —— 重編了卻忘記重啟,時間戳檢查照樣全過。
+> 實測靠這招連續四輪把舊 prompt 的服務當成新版量測。
+>
+> **改用指紋比對。** 服務會在 `/health` 回報 grounding prompt 的 sha256 前 12 碼:
 >
 > ```powershell
-> go build -o kb.exe ./cmd/kb          # 一定要重編,不要沿用既有 kb.exe
-> (Get-Item kb.exe).LastWriteTime      # 應晚於 internal/kb/*.go 的修改時間
+> go build -o bin/kb.exe ./cmd/kb   # 重編
+> # 停掉舊 process,啟動新的,然後:
+> make prompt-check
 > ```
+>
+> ```
+> source : 8ff276e5596e
+> kb     : 8ff276e5596e
+> kbmcp  : 8ff276e5596e
+> service: {"status":"ok","chat":{"model":"...","prompt":"8ff276e5596e",...}}
+> ```
+>
+> 四行指紋全部一致才可以開跑。任一行不同、或 `service` 根本沒有 `chat.prompt`
+> 欄位(binary 早於這個功能),都代表你即將量到的不是現在的原始碼。
+> `make` 不可用時等價於 `bin/kb.exe -fingerprint` 與 `curl -s localhost:12598/health`。
 >
 > 只改 `kb/` 資料(重新 export)時不必重編,但**要重跑一次完整匯入**
 > (`ui-kb-merge-import`:重併全部來源 → check → import → `/index`);
@@ -128,8 +144,24 @@ make run                                        # 重新編譯並啟動服務(�
 
 ## 判讀紀律
 
-- **弱模型不穩定**:同一份資料兩次 14/32 與 17/32。跑兩次再下結論;比較題型分布,
-  不比單題。
+- **先釘住取樣再談穩定度**:沒設 `KB_CHAT_TEMPERATURE` 時,上游會落回模型自己的
+  `generation_config`(Gemma 是 1.0),同一份資料兩次 14/32 與 17/32 —— 那是取樣雜訊,
+  不是資料或檢索問題。釘成 0 之後實測 36 題兩輪 29 題逐字相同、其餘 7 題判定一致。
+  跑兩次再下結論;比較題型分布,不比單題。
+- **改過 prompt 的第一輪是熱身,丟掉**:vLLM 的 prefix cache 冷啟動與命中走不同數值
+  路徑,改完 prompt 的 round 1 與其後每一輪都不同且不可重現(實測 round 1 = 34/36、
+  round 2 = 32/36,數小時後重問全部重現 round 2)。**分數較高的那輪才是假的。**
+  prompt 一變就跑三輪、丟掉第一輪。
+- **措辭漂移不是不穩定,判定翻面才是**:穩定度看後兩輪的 `ok` 與 `grounded` 是否一致,
+  不是看答案字串。實測 36 題有 7 題文字不同,7 題全是 `grounded=false` 的拒答
+  (同一題 339 字 vs 40 字),其餘 29 題逐字相同,sources 36/36 一致 —— 拒答是模型最
+  沒把握的位置,top-1 與 top-2 幾乎平手,serving 端一點數值抖動就翻面。
+  **拿逐字相同當 gate 會把通過的一輪判成失敗。**
+- **基準跑必須單 worker**:多個 worker 平行打同一個服務會改變 vLLM 的 batch 組成,
+  數值跟著變,argmax 在 top-1 與 top-2 幾乎平手的位置翻面 —— 也就是需要斟酌的那些題。
+  同 prompt 同題庫實測:3 workers 逐字相同 13/36、3 題 unstable;單 worker 36/36、
+  0 題 unstable。**併發跑出來的數字不能拿去跟單線的比**,而且併發那輪還同時換了
+  prompt,兩個變因,整輪白跑。高信心題型(symbol 查詢那種)併發是划算的,判讀題不是。
 - **先查原始資料再喊 bug**:實測踩過的假紅旗 —— 步驟寫「點擊現金付款」卻轉場到
   調味畫面,看似證據誤標,查座標後是真實序列(先按付款被擋、補完調味再按成功,
   兩次點擊座標幾乎相同)。**用 trajectory 的 position 一致性驗證,別只看文件。**

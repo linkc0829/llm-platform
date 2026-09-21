@@ -2,6 +2,19 @@ package kb
 
 type HealthResponse struct {
 	Status string `json:"status"`
+	// Chat names the decoding settings the service answers with. An eval run
+	// records it so a later comparison can tell a corpus regression apart from
+	// a model or parameter change. Absent when no real model is wired.
+	Chat *ChatConfig `json:"chat,omitempty"`
+}
+
+type ChatConfig struct {
+	Model string `json:"model"`
+	// Prompt fingerprints the grounding instructions, so a run can prove which
+	// prompt answered it. It changes whenever the prompt does.
+	Prompt      string  `json:"prompt"`
+	Temperature float64 `json:"temperature"`
+	MaxTokens   int64   `json:"max_tokens,omitempty"`
 }
 
 type IndexResponse struct {
