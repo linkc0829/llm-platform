@@ -49,6 +49,14 @@ type OpenAIConfig struct {
 	GeminiThinkingLevel string `mapstructure:"gemini_thinking_level"`
 	ChatModel           string `mapstructure:"chat_model"`
 	EmbedModel          string `mapstructure:"embed_model"`
+	// Decoding parameters for every chat completion. Left unset, the upstream
+	// falls back to the served model's own generation_config — Gemma ships
+	// temperature 1.0, which made a 36-question eval disagree with itself
+	// between two rounds. Grounded QA wants greedy decoding, so pin it here.
+	ChatTemperature float64 `mapstructure:"chat_temperature"`
+	// 0 leaves max_tokens off the request. Answers cite their sources in the
+	// closing lines, so a truncating limit costs the citation, not just prose.
+	ChatMaxTokens int64 `mapstructure:"chat_max_tokens"`
 }
 
 type KBConfig struct {
@@ -96,6 +104,8 @@ func newViper() *viper.Viper {
 	v.SetDefault("openai.llm_mode", "openai")
 	v.SetDefault("openai.chat_model", "gpt-4o-mini")
 	v.SetDefault("openai.embed_model", "text-embedding-3-small")
+	v.SetDefault("openai.chat_temperature", 0)
+	v.SetDefault("openai.chat_max_tokens", 1024)
 	v.SetDefault("kb.docs_dir", "docs")
 	v.SetDefault("kb.index_dir", ".kb")
 
@@ -118,6 +128,8 @@ func newViper() *viper.Viper {
 		"openai.embed_api_key":         "KB_EMBED_API_KEY",
 		"openai.gemini_thinking_level": "KB_GEMINI_THINKING_LEVEL",
 		"openai.chat_model":            "KB_CHAT_MODEL",
+		"openai.chat_temperature":      "KB_CHAT_TEMPERATURE",
+		"openai.chat_max_tokens":       "KB_CHAT_MAX_TOKENS",
 		"openai.embed_model":           "KB_EMBED_MODEL",
 		"kb.docs_dir":                  "KB_DOCS_DIR",
 		"kb.index_dir":                 "KB_INDEX_DIR",

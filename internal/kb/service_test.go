@@ -204,8 +204,15 @@ func TestServiceChatDetectsCorruptedSentinel(t *testing.T) {
 		{"observed_corruption_unequipped", "[UNEQUIPPED] the context lists controls only", false, "the context lists controls only"},
 		{"markdown_emphasis", "**[UNGROUNDED]** no steps recorded", false, "no steps recorded"},
 		{"answer_lead_in", "Answer: [UNGROUNDED] nothing to go on", false, "nothing to go on"},
+		{"trailing_sentinel", "no recorded steps\n\n[UNGROUNDED]", false, "no recorded steps"},
+		{"trailing_sentinel_inline", "no recorded steps. [UNGROUNDED]", false, "no recorded steps."},
+		{"trailing_corruption_unequipped", "the context lists controls only\n[UNEQUIPPED]", false, "the context lists controls only"},
+		{"trailing_markdown_emphasis", "no steps recorded\n\n**[UNGROUNDED]**", false, "no steps recorded"},
 		{"grounded_answer_untouched", "Click Settings, then Printers.", true, "Click Settings, then Printers."},
 		{"bracket_in_prose_is_not_a_refusal", "Use the [UNIT] field on the form.", true, "Use the [UNIT] field on the form."},
+		// Every grounded answer ends in a citation, so the suffix match has to
+		// leave one alone or the whole corpus reads as refusals.
+		{"trailing_citation_is_not_a_refusal", "Press Enter [Store.POS/procedures/POS_Login/Login-procedure.md#登入-步驟-1]", true, "Press Enter [Store.POS/procedures/POS_Login/Login-procedure.md#登入-步驟-1]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -423,7 +430,14 @@ func TestServiceChatEnglishIdentifierUsesBM25(t *testing.T) {
 	}
 }
 
+// Degrading to BM25 keeps the query answerable, but strategy=markdown alone
+// cannot say why: a 606-question run downgraded two queries this way and the
+// field read the same as a section that simply has no vector. The warn line is
+// what makes the degrade countable, so it is part of the contract, not decoration.
 func TestServiceChatDegradesWhenEmbedderFails(t *testing.T) {
+	core, logs := observer.New(zapcore.WarnLevel)
+	defer zap.ReplaceGlobals(zap.New(core))()
+
 	sections := mustSampleSections(t)
 	llm := &fakeLLM{answer: "answer"}
 	svc := NewService(&fakeSectionStore{}, llm, &fakeEmbedder{err: errors.New("down")}, nil, NewInProcStore(), "test-model")
@@ -435,6 +449,13 @@ func TestServiceChatDegradesWhenEmbedderFails(t *testing.T) {
 	}
 	if answer.Strategy() != "markdown" {
 		t.Errorf("Service.Chat() strategy = %q, want markdown", answer.Strategy())
+	}
+	entries := logs.FilterMessage("query_embed_failed").All()
+	if len(entries) != 1 {
+		t.Fatalf("query_embed_failed entries = %d, want 1", len(entries))
+	}
+	if got := entries[0].ContextMap()["error"]; got != "down" {
+		t.Errorf("query_embed_failed error = %v, want it to name the cause", got)
 	}
 }
 

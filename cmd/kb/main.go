@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -21,6 +24,17 @@ import (
 )
 
 func main() {
+	// Four eval rounds were measured against a service still running an older
+	// grounding prompt, because a rebuilt binary sitting in bin/ looks exactly
+	// like a restarted one. Printing the fingerprint the binary carries makes
+	// the comparison against a live /health a single command.
+	fingerprint := flag.Bool("fingerprint", false, "print the grounding prompt fingerprint and exit")
+	flag.Parse()
+	if *fingerprint {
+		fmt.Fprintln(os.Stdout, kb.GroundingFingerprint())
+		return
+	}
+
 	cfg, err := config.LoadKB()
 	if err != nil {
 		log.Fatalf("config: %v", err)
@@ -66,7 +80,7 @@ func main() {
 			lg.Sugar().Fatalf("load index: %v", err)
 		}
 	}
-	h := kb.NewHandler(svc, lg, httpPrincipalProvider(cfg))
+	h := kb.NewHandler(svc, lg, httpPrincipalProvider(cfg), bootstrap.ChatRuntime(cfg))
 
 	routeGuards := kb.RouteGuards{AllowUnauthenticated: cfg.Auth.Disabled}
 	if !cfg.Auth.Disabled {

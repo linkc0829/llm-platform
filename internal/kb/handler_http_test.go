@@ -168,3 +168,38 @@ func TestWriteErrorMapsSessionOwnerMismatchToForbidden(t *testing.T) {
 		t.Errorf("writeError(ErrSessionOwnerMismatch) status = %d body = %s, want 403", w.Code, w.Body.String())
 	}
 }
+
+// The eval runner reads the answering model off /health, so it can record in
+// each metrics file which model and decoding settings produced the round.
+func TestHandlerHealthReportsChatRuntime(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name string
+		chat *ChatConfig
+		want string
+	}{
+		{
+			name: "configured",
+			chat: &ChatConfig{Model: "gemma-4-26b-a4b", Prompt: GroundingFingerprint(), Temperature: 0, MaxTokens: 1024},
+			want: `{"status":"ok","chat":{"model":"gemma-4-26b-a4b","prompt":"` + GroundingFingerprint() + `","temperature":0,"max_tokens":1024}}`,
+		},
+		{name: "fake_llm_mode", chat: nil, want: `{"status":"ok"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gin.New()
+			RegisterRoutes(r.Group(""), &Handler{svc: &fakeHandlerService{}, principal: AnonymousPrincipal, chatConfig: tt.chat},
+				RouteGuards{AllowUnauthenticated: true})
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/health", nil))
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("GET /health status = %d, want 200", w.Code)
+			}
+			if w.Body.String() != tt.want {
+				t.Errorf("GET /health body = %s, want %s", w.Body.String(), tt.want)
+			}
+		})
+	}
+}

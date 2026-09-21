@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -20,6 +21,16 @@ import (
 )
 
 func main() {
+	// Mirrors cmd/kb: the eval runner spawns this binary fresh each time, so the
+	// risk here is not a stale process but a stale file — an unrebuilt bin/ that
+	// silently measures the previous grounding prompt.
+	fingerprint := flag.Bool("fingerprint", false, "print the grounding prompt fingerprint and exit")
+	flag.Parse()
+	if *fingerprint {
+		fmt.Fprintln(os.Stdout, kb.GroundingFingerprint())
+		return
+	}
+
 	cfg, err := config.LoadKB()
 	if err != nil {
 		fatal(err)

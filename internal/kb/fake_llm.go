@@ -12,7 +12,7 @@ func NewFakeLLM() *FakeLLM { return &FakeLLM{} }
 
 func (f *FakeLLM) Answer(_ context.Context, query string, sections []Section, _ []Turn) (string, error) {
 	if len(sections) == 0 {
-		return ungroundedSentinel + " no context was retrieved for this question.", nil
+		return "no context was retrieved for this question. " + ungroundedSentinel, nil
 	}
 	var b strings.Builder
 	b.WriteString("[fake LLM] Question: ")

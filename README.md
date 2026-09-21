@@ -164,6 +164,7 @@ Environment variables:
 - `KB_EMBED_API_KEY` - optional API key for embeddings; defaults to `OPENAI_API_KEY` when unset.
 - `KB_GEMINI_THINKING_LEVEL` - optional Gemini OpenAI-compatible thinking level; set `minimal` to disable Gemma 4 thinking.
 - `KB_CHAT_MODEL` / `KB_EMBED_MODEL` - chat and embedding model names (e.g. `llama3.1:8b` / `snowflake-arctic-embed2`).
+- `KB_CHAT_TEMPERATURE` (default `0`) / `KB_CHAT_MAX_TOKENS` (default `1024`, `0` omits the field) - decoding parameters sent with every chat completion. Without them the upstream falls back to the served model's own `generation_config`, so repeated eval rounds disagree with each other. `GET /health` reports both alongside the chat model and a fingerprint of the grounding prompt, so an eval run can prove which build answered it.
 - `KB_DOCS_DIR` / `KB_INDEX_DIR` - source and local index directories.
 
 ## Retrieval

@@ -20,9 +20,24 @@ func NewKBService(cfg *config.Config) *kb.Service {
 		llm = fake
 		embedder = fake
 	} else {
-		oai := kb.NewOpenAIClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, cfg.OpenAI.EmbedBaseURL, cfg.OpenAI.EmbedAPIKey, cfg.OpenAI.GeminiThinkingLevel, cfg.OpenAI.ChatModel, cfg.OpenAI.EmbedModel)
+		oai := kb.NewOpenAIClient(cfg.OpenAI.APIKey, cfg.OpenAI.BaseURL, cfg.OpenAI.EmbedBaseURL, cfg.OpenAI.EmbedAPIKey, cfg.OpenAI.GeminiThinkingLevel, cfg.OpenAI.ChatModel, cfg.OpenAI.EmbedModel,
+			kb.ChatOptions{Temperature: cfg.OpenAI.ChatTemperature, MaxTokens: cfg.OpenAI.ChatMaxTokens})
 		llm = oai
 		embedder = oai
 	}
 	return kb.NewService(repo, llm, embedder, vecRepo, sessions, cfg.OpenAI.EmbedModel)
+}
+
+// ChatRuntime describes the model /health should report, or nil in fake mode
+// where no real model answers.
+func ChatRuntime(cfg *config.Config) *kb.ChatConfig {
+	if strings.EqualFold(cfg.OpenAI.LLMMode, "fake") {
+		return nil
+	}
+	return &kb.ChatConfig{
+		Model:       cfg.OpenAI.ChatModel,
+		Prompt:      kb.GroundingFingerprint(),
+		Temperature: cfg.OpenAI.ChatTemperature,
+		MaxTokens:   cfg.OpenAI.ChatMaxTokens,
+	}
 }

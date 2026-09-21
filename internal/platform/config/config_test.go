@@ -161,3 +161,48 @@ func TestLoadKBDefaultsLoggerOutputToFile(t *testing.T) {
 		t.Errorf("Logger.Output = %q, want stdout,log/kb.log", cfg.Logger.Output)
 	}
 }
+
+func TestLoadKBChatDecodingDefaultsAndOverrides(t *testing.T) {
+	tests := []struct {
+		name          string
+		env           string
+		wantTemp      float64
+		wantMaxTokens int64
+	}{
+		{name: "defaults_to_greedy", env: "", wantTemp: 0, wantMaxTokens: 1024},
+		{name: "env_overrides", env: "KB_CHAT_TEMPERATURE=0.3\nKB_CHAT_MAX_TOKENS=0\n", wantTemp: 0.3, wantMaxTokens: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			unsetEnv(t, "KB_CHAT_TEMPERATURE")
+			unsetEnv(t, "KB_CHAT_MAX_TOKENS")
+
+			cwd, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("get cwd: %v", err)
+			}
+			defer func() {
+				_ = os.Chdir(cwd)
+			}()
+
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=key\n"+tt.env), 0o600); err != nil {
+				t.Fatalf("write .env: %v", err)
+			}
+			if err := os.Chdir(dir); err != nil {
+				t.Fatalf("chdir: %v", err)
+			}
+
+			cfg, err := LoadKB()
+			if err != nil {
+				t.Fatalf("LoadKB: %v", err)
+			}
+			if cfg.OpenAI.ChatTemperature != tt.wantTemp {
+				t.Errorf("chat temperature = %v, want %v", cfg.OpenAI.ChatTemperature, tt.wantTemp)
+			}
+			if cfg.OpenAI.ChatMaxTokens != tt.wantMaxTokens {
+				t.Errorf("chat max tokens = %d, want %d", cfg.OpenAI.ChatMaxTokens, tt.wantMaxTokens)
+			}
+		})
+	}
+}
