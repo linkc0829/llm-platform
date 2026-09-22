@@ -121,3 +121,39 @@ func TestEnsureServerStoppedRejectsRunningHealthEndpoint(t *testing.T) {
 func osWriteFile(path string, contents []byte) error {
 	return os.WriteFile(path, contents, 0o600)
 }
+
+func TestCreateServiceToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	store, err := auth.NewBootstrapStore(path, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewBootstrapStore() error = %v", err)
+	}
+	_, _, err = store.CreateAdminToken(context.Background(), "cli", "admin")
+	if err != nil {
+		t.Fatalf("CreateAdminToken() error = %v", err)
+	}
+	cfg := &config.Config{Auth: config.AuthConfig{File: path}}
+
+	var output bytes.Buffer
+	args := []string{"-name", "kb-service", "-workload", "rag", "-trusted", "-engineering"}
+	if err := create(cfg, zap.NewNop(), args, &output, io.Discard); err != nil {
+		t.Fatalf("create() error = %v", err)
+	}
+	var created createAdminResponse
+	if err := json.Unmarshal(output.Bytes(), &created); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+
+	loadedStore, err := auth.LoadFile(path, zap.NewNop())
+	if err != nil {
+		t.Fatalf("LoadFile error = %v", err)
+	}
+	p, err := loadedStore.Resolve(context.Background(), created.Token)
+	if err != nil {
+		t.Fatalf("Resolve error = %v", err)
+	}
+	if p.Name != "kb-service" || p.Workload != "rag" || !p.Trusted || !p.Engineering {
+		t.Errorf("resolved principal mismatch: %+v", p)
+	}
+}
+

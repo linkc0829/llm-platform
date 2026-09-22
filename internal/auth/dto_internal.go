@@ -23,6 +23,7 @@ type TokenSpec struct {
 	AllTeams    bool
 	Engineering bool
 	Indexer     bool
+	Workload    string
 }
 
 type fileDocument struct {

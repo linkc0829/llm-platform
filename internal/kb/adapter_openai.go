@@ -21,6 +21,7 @@ import (
 type ChatOptions struct {
 	Temperature float64
 	MaxTokens   int64
+	ForwardUser bool
 }
 
 // OpenAIClient implements LLM and Embedder.
@@ -207,7 +208,13 @@ func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Sect
 			"google": map[string]any{"thinking_config": map[string]string{"thinking_level": o.geminiThinkingLevel}},
 		}})
 	}
-	completion, err := o.client.Chat.Completions.New(ctx, params)
+	var requestOptions []option.RequestOption
+	if o.chat.ForwardUser {
+		if principalID := principalIDFromContext(ctx); principalID != "" {
+			requestOptions = append(requestOptions, option.WithHeader("X-On-Behalf-Of", principalID))
+		}
+	}
+	completion, err := o.client.Chat.Completions.New(ctx, params, requestOptions...)
 	if err != nil {
 		return "", classifyLLMError(fmt.Errorf("openai chat: %w", err))
 	}

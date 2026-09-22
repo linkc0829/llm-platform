@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadKBReadsEnvFileAliases(t *testing.T) {
@@ -206,3 +207,64 @@ func TestLoadKBChatDecodingDefaultsAndOverrides(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadGatewayConfig(t *testing.T) {
+	unsetEnv(t, "GATEWAY_UPSTREAM_BASE_URL")
+	unsetEnv(t, "GATEWAY_UPSTREAM_HEADER_TIMEOUT")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+
+	runInDir := func(t *testing.T, envContent string, fn func(t *testing.T)) {
+		dir := t.TempDir()
+		if envContent != "" {
+			if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(envContent), 0o600); err != nil {
+				t.Fatalf("write .env: %v", err)
+			}
+		}
+		if err := os.Chdir(dir); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+		defer func() { _ = os.Chdir(cwd) }()
+		fn(t)
+	}
+
+	t.Run("missing_base_url_fails", func(t *testing.T) {
+		runInDir(t, "", func(t *testing.T) {
+			_, err := LoadGateway()
+			if err == nil {
+				t.Fatal("expected error when GATEWAY_UPSTREAM_BASE_URL is missing")
+			}
+		})
+	})
+
+	t.Run("defaults_and_url_stripping", func(t *testing.T) {
+		runInDir(t, "GATEWAY_UPSTREAM_BASE_URL=http://localhost:8000/v1/\n", func(t *testing.T) {
+			cfg, err := LoadGateway()
+			if err != nil {
+				t.Fatalf("LoadGateway: %v", err)
+			}
+			if cfg.Gateway.UpstreamBaseURL != "http://localhost:8000" {
+				t.Errorf("UpstreamBaseURL = %q, want http://localhost:8000", cfg.Gateway.UpstreamBaseURL)
+			}
+			if cfg.Gateway.UpstreamHeaderTimeout != 300*time.Second {
+				t.Errorf("UpstreamHeaderTimeout = %v, want 300s", cfg.Gateway.UpstreamHeaderTimeout)
+			}
+		})
+	})
+
+	t.Run("custom_header_timeout", func(t *testing.T) {
+		runInDir(t, "GATEWAY_UPSTREAM_BASE_URL=http://localhost:8000\nGATEWAY_UPSTREAM_HEADER_TIMEOUT=45s\n", func(t *testing.T) {
+			cfg, err := LoadGateway()
+			if err != nil {
+				t.Fatalf("LoadGateway: %v", err)
+			}
+			if cfg.Gateway.UpstreamHeaderTimeout != 45*time.Second {
+				t.Errorf("UpstreamHeaderTimeout = %v, want 45s", cfg.Gateway.UpstreamHeaderTimeout)
+			}
+		})
+	})
+}
+

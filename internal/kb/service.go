@@ -230,8 +230,26 @@ func (s *Service) deny(ctx context.Context, ownerID, sessionID, query string, st
 	return answer, sessionID, nil
 }
 
+type contextKey string
+
+const principalIDContextKey contextKey = "kb.principal_id"
+
+func withPrincipalID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, principalIDContextKey, id)
+}
+
+func principalIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(principalIDContextKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
 // answerFrom grounds the LLM on the given sections, records the turn, and returns the answer.
 func (s *Service) answerFrom(ctx context.Context, ownerID, sessionID, query string, sections []Section, history []Turn, strategy string, start time.Time) (Answer, string, error) {
+	if ownerID != "" {
+		ctx = withPrincipalID(ctx, ownerID)
+	}
 	text, err := s.llm.Answer(ctx, query, sections, history)
 	if err != nil {
 		return Answer{}, sessionID, fmt.Errorf("llm answer: %w", err)
