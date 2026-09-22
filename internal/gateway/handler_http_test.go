@@ -61,7 +61,7 @@ func setupTestGateway(t *testing.T, upstreamHandler http.Handler, resolver Token
 	}
 
 	limiter := NewLimiter(maxGlobal, maxPerUser)
-	h := NewHandler(uURL, "upstream-secret-key", limiter, resolver, 0, zap.NewNop())
+	h := NewHandler(uURL, "upstream-secret-key", nil, "", "", limiter, resolver, 0, zap.NewNop())
 
 	engine := gin.New()
 	RegisterRoutes(engine.Group(""), h)
@@ -451,7 +451,7 @@ func TestHandler_TransportConfiguration(t *testing.T) {
 	uURL, _ := url.Parse("http://localhost:8080")
 
 	// Custom timeout
-	hCustom := NewHandler(uURL, "key", NewLimiter(10, 5), nil, 120*time.Second, zap.NewNop())
+	hCustom := NewHandler(uURL, "key", nil, "", "", NewLimiter(10, 5), nil, 120*time.Second, zap.NewNop())
 	trCustom, ok := hCustom.proxy.Transport.(*http.Transport)
 	if !ok {
 		t.Fatalf("expected *http.Transport, got %T", hCustom.proxy.Transport)
@@ -464,7 +464,7 @@ func TestHandler_TransportConfiguration(t *testing.T) {
 	}
 
 	// Default fallback to 300s when <= 0
-	hDefault := NewHandler(uURL, "key", NewLimiter(10, 5), nil, 0, zap.NewNop())
+	hDefault := NewHandler(uURL, "key", nil, "", "", NewLimiter(10, 5), nil, 0, zap.NewNop())
 	trDefault, ok := hDefault.proxy.Transport.(*http.Transport)
 	if !ok {
 		t.Fatalf("expected *http.Transport, got %T", hDefault.proxy.Transport)
@@ -535,7 +535,7 @@ func TestHandler_UpstreamFailure_Sanitized502(t *testing.T) {
 	}
 
 	limiter := NewLimiter(10, 5)
-	h := NewHandler(uURL, "upstream-secret-key", limiter, resolver, 0, zap.NewNop())
+	h := NewHandler(uURL, "upstream-secret-key", nil, "", "", limiter, resolver, 0, zap.NewNop())
 
 	engine := gin.New()
 	RegisterRoutes(engine.Group(""), h)
@@ -587,7 +587,7 @@ func TestHandler_UpstreamTimeout_504(t *testing.T) {
 
 	// Configure a short 30ms response header timeout
 	limiter := NewLimiter(10, 5)
-	h := NewHandler(uURL, "upstream-secret-key", limiter, resolver, 30*time.Millisecond, zap.NewNop())
+	h := NewHandler(uURL, "upstream-secret-key", nil, "", "", limiter, resolver, 30*time.Millisecond, zap.NewNop())
 
 	engine := gin.New()
 	RegisterRoutes(engine.Group(""), h)
@@ -611,4 +611,290 @@ func TestHandler_UpstreamTimeout_504(t *testing.T) {
 	if errResp["error"] != "upstream_timeout" {
 		t.Errorf("error = %q, want upstream_timeout", errResp["error"])
 	}
+}
+
+func TestHandler_Embeddings_RoutingAndModelBinding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	resolver := &mockResolver{
+		principals: map[string]shared.Principal{
+			"tok-trusted":   {ID: "kb-service", Trusted: true},
+			"tok-untrusted": {ID: "regular-user", Trusted: false},
+		},
+	}
+
+	var (
+		chatCalls  int32
+		embedCalls int32
+		lastPath   string
+		lastAuth   string
+		lastXOnBe  string
+	)
+
+	chatServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&chatCalls, 1)
+		lastPath = r.URL.Path
+		lastAuth = r.Header.Get("Authorization")
+		lastXOnBe = r.Header.Get("X-On-Behalf-Of")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[],"model":"chat-model"}`))
+	}))
+	defer chatServer.Close()
+
+	embedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&embedCalls, 1)
+		lastPath = r.URL.Path
+		lastAuth = r.Header.Get("Authorization")
+		lastXOnBe = r.Header.Get("X-On-Behalf-Of")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"index":0,"embedding":[0.1,0.2]}],"model":"gemini-embedding-2","usage":{"prompt_tokens":128,"total_tokens":128}}`))
+	}))
+	defer embedServer.Close()
+
+	chatURL, err := url.Parse(chatServer.URL)
+	if err != nil {
+		t.Fatalf("parse chat server URL: %v", err)
+	}
+	embedURL, err := url.Parse(embedServer.URL + "/v1beta/openai")
+	if err != nil {
+		t.Fatalf("parse embed server URL: %v", err)
+	}
+
+	// 目的：選錯 upstream，等於把流量和 key 送到錯的供應商；放行不符的模型，就會拿不相容的向量去比對，而且沒有任何人會發現。
+	t.Run("route_to_embed_upstream_with_stripped_v1", func(t *testing.T) {
+		core, logs := observer.New(zap.InfoLevel)
+		zap.ReplaceGlobals(zap.New(core))
+
+		h := NewHandler(
+			chatURL, "chat-key",
+			embedURL, "embed-key", "gemini-embedding-2",
+			NewLimiter(10, 5), resolver, 0, zap.NewNop(),
+		)
+		r := gin.New()
+		RegisterRoutes(r.Group(""), h)
+
+		atomic.StoreInt32(&chatCalls, 0)
+		atomic.StoreInt32(&embedCalls, 0)
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(`{"model":"gemini-embedding-2","input":["test"]}`))
+		req.Header.Set("Authorization", "Bearer tok-trusted")
+		req.Header.Set("X-On-Behalf-Of", "alice")
+		rec := newCloseNotifyingRecorder()
+		r.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+		}
+		if atomic.LoadInt32(&embedCalls) != 1 {
+			t.Errorf("embedCalls = %d, want 1", atomic.LoadInt32(&embedCalls))
+		}
+		if atomic.LoadInt32(&chatCalls) != 0 {
+			t.Errorf("chatCalls = %d, want 0", atomic.LoadInt32(&chatCalls))
+		}
+		// Upstream path must be /v1beta/openai/embeddings, never /v1beta/openai/v1/embeddings.
+		if lastPath != "/v1beta/openai/embeddings" {
+			t.Errorf("upstream path = %q, want /v1beta/openai/embeddings", lastPath)
+		}
+		if lastAuth != "Bearer embed-key" {
+			t.Errorf("upstream auth = %q, want Bearer embed-key", lastAuth)
+		}
+		if lastXOnBe != "" {
+			t.Errorf("upstream X-On-Behalf-Of = %q, want stripped (empty)", lastXOnBe)
+		}
+
+		// Verify usage.prompt_tokens record.
+		usageEntries := logs.FilterMessage("gateway_usage").FilterField(zap.Int("status", http.StatusOK)).All()
+		if len(usageEntries) == 0 {
+			t.Fatal("expected gateway_usage log entry")
+		}
+		ctxMap := usageEntries[len(usageEntries)-1].ContextMap()
+		if ctxMap["user_id"] != "alice" {
+			t.Errorf("user_id = %v, want alice", ctxMap["user_id"])
+		}
+		if ctxMap["prompt_tokens"] != int64(128) {
+			t.Errorf("prompt_tokens = %v, want 128", ctxMap["prompt_tokens"])
+		}
+		if ctxMap["completion_tokens"] != int64(0) {
+			t.Errorf("completion_tokens = %v, want 0", ctxMap["completion_tokens"])
+		}
+	})
+
+	t.Run("chat_still_goes_to_chat_upstream", func(t *testing.T) {
+		h := NewHandler(
+			chatURL, "chat-key",
+			embedURL, "embed-key", "gemini-embedding-2",
+			NewLimiter(10, 5), resolver, 0, zap.NewNop(),
+		)
+		r := gin.New()
+		RegisterRoutes(r.Group(""), h)
+
+		atomic.StoreInt32(&chatCalls, 0)
+		atomic.StoreInt32(&embedCalls, 0)
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"chat-model","messages":[]}`))
+		req.Header.Set("Authorization", "Bearer tok-trusted")
+		rec := newCloseNotifyingRecorder()
+		r.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if atomic.LoadInt32(&chatCalls) != 1 {
+			t.Errorf("chatCalls = %d, want 1", atomic.LoadInt32(&chatCalls))
+		}
+		if atomic.LoadInt32(&embedCalls) != 0 {
+			t.Errorf("embedCalls = %d, want 0", atomic.LoadInt32(&embedCalls))
+		}
+	})
+
+	t.Run("fallback_to_chat_upstream_when_no_embed_upstream", func(t *testing.T) {
+		h := NewHandler(
+			chatURL, "chat-key",
+			nil, "", "",
+			NewLimiter(10, 5), resolver, 0, zap.NewNop(),
+		)
+		r := gin.New()
+		RegisterRoutes(r.Group(""), h)
+
+		atomic.StoreInt32(&chatCalls, 0)
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(`{"model":"any-model"}`))
+		req.Header.Set("Authorization", "Bearer tok-trusted")
+		rec := newCloseNotifyingRecorder()
+		r.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if atomic.LoadInt32(&chatCalls) != 1 {
+			t.Errorf("chatCalls = %d, want 1", atomic.LoadInt32(&chatCalls))
+		}
+		if lastPath != "/v1/embeddings" {
+			t.Errorf("fallback path = %q, want /v1/embeddings", lastPath)
+		}
+	})
+
+	t.Run("model_binding_rejections_and_logging", func(t *testing.T) {
+		cases := []struct {
+			name        string
+			body        string
+			expectModel string
+		}{
+			{"mismatched_model", `{"model":"wrong-model","input":["hi"]}`, "wrong-model"},
+			{"invalid_json", `{"model":`, ""},
+			{"missing_model", `{"input":["hi"]}`, ""},
+			{"empty_model", `{"model":"","input":["hi"]}`, ""},
+			{"non_string_model", `{"model":12345,"input":["hi"]}`, ""},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				core, logs := observer.New(zap.InfoLevel)
+				zap.ReplaceGlobals(zap.New(core))
+
+				h := NewHandler(
+					chatURL, "chat-key",
+					embedURL, "embed-key", "gemini-embedding-2",
+					NewLimiter(10, 5), resolver, 0, zap.NewNop(),
+				)
+				r := gin.New()
+				RegisterRoutes(r.Group(""), h)
+
+				atomic.StoreInt32(&embedCalls, 0)
+
+				req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(tc.body))
+				req.Header.Set("Authorization", "Bearer tok-trusted")
+				rec := newCloseNotifyingRecorder()
+				r.ServeHTTP(rec, req)
+
+				if rec.Code != http.StatusBadRequest {
+					t.Fatalf("status = %d, want 400", rec.Code)
+				}
+				if !strings.Contains(rec.Body.String(), `"error":"unknown_embedding_model"`) {
+					t.Errorf("body = %s, want unknown_embedding_model", rec.Body.String())
+				}
+				if atomic.LoadInt32(&embedCalls) != 0 {
+					t.Errorf("embedCalls = %d, want 0 (must not forward)", atomic.LoadInt32(&embedCalls))
+				}
+
+				entries := logs.FilterMessage("gateway_usage").FilterField(zap.Int("status", http.StatusBadRequest)).All()
+				if len(entries) == 0 {
+					t.Fatal("expected gateway_usage log entry for 400 rejection")
+				}
+				ctxMap := entries[len(entries)-1].ContextMap()
+				if ctxMap["error"] != "unknown_embedding_model" {
+					t.Errorf("error = %v, want unknown_embedding_model", ctxMap["error"])
+				}
+				if tc.expectModel != "" && ctxMap["model"] != tc.expectModel {
+					t.Errorf("model = %v, want %s", ctxMap["model"], tc.expectModel)
+				}
+			})
+		}
+	})
+
+	t.Run("non_post_returns_405_when_binding_active", func(t *testing.T) {
+		h := NewHandler(
+			chatURL, "chat-key",
+			embedURL, "embed-key", "gemini-embedding-2",
+			NewLimiter(10, 5), resolver, 0, zap.NewNop(),
+		)
+		r := gin.New()
+		RegisterRoutes(r.Group(""), h)
+
+		atomic.StoreInt32(&embedCalls, 0)
+
+		req := httptest.NewRequest(http.MethodGet, "/v1/embeddings", nil)
+		req.Header.Set("Authorization", "Bearer tok-trusted")
+		rec := newCloseNotifyingRecorder()
+		r.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("status = %d, want 405", rec.Code)
+		}
+		if atomic.LoadInt32(&embedCalls) != 0 {
+			t.Errorf("embedCalls = %d, want 0", atomic.LoadInt32(&embedCalls))
+		}
+	})
+
+	t.Run("embed_model_only_enforces_binding_and_forwards_to_chat", func(t *testing.T) {
+		h := NewHandler(
+			chatURL, "chat-key",
+			nil, "", "local-embed-model",
+			NewLimiter(10, 5), resolver, 0, zap.NewNop(),
+		)
+		r := gin.New()
+		RegisterRoutes(r.Group(""), h)
+
+		// 1. Matching model routes to chat upstream
+		atomic.StoreInt32(&chatCalls, 0)
+		req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(`{"model":"local-embed-model"}`))
+		req.Header.Set("Authorization", "Bearer tok-trusted")
+		rec := newCloseNotifyingRecorder()
+		r.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if atomic.LoadInt32(&chatCalls) != 1 {
+			t.Errorf("chatCalls = %d, want 1", atomic.LoadInt32(&chatCalls))
+		}
+		if lastPath != "/v1/embeddings" {
+			t.Errorf("path = %q, want /v1/embeddings", lastPath)
+		}
+
+		// 2. Mismatched model rejects with 400
+		atomic.StoreInt32(&chatCalls, 0)
+		reqBad := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(`{"model":"wrong-model"}`))
+		reqBad.Header.Set("Authorization", "Bearer tok-trusted")
+		recBad := newCloseNotifyingRecorder()
+		r.ServeHTTP(recBad, reqBad)
+
+		if recBad.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", recBad.Code)
+		}
+		if atomic.LoadInt32(&chatCalls) != 0 {
+			t.Errorf("chatCalls = %d, want 0", atomic.LoadInt32(&chatCalls))
+		}
+	})
 }

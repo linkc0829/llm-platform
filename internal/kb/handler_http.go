@@ -17,17 +17,22 @@ import (
 type service interface {
 	Index(ctx context.Context) (filesIndexed, sectionsIndexed int, err error)
 	ChatWithMetrics(ctx context.Context, principal shared.Principal, query, sessionID string) (Answer, string, RetrievalMetrics, error)
+	VectorsState() string
 }
 
 type Handler struct {
-	svc        service
-	logger     *zap.Logger
-	principal  func(*gin.Context) shared.Principal
-	chatConfig *ChatConfig
+	svc          service
+	logger       *zap.Logger
+	principal    func(*gin.Context) shared.Principal
+	chatConfig   *ChatConfig
+	indexTimeout time.Duration
 }
 
-func NewHandler(svc *Service, logger *zap.Logger, principal func(*gin.Context) shared.Principal, chat *ChatConfig) *Handler {
-	return &Handler{svc: svc, logger: logger, principal: principal, chatConfig: chat}
+func NewHandler(svc *Service, logger *zap.Logger, principal func(*gin.Context) shared.Principal, chat *ChatConfig, indexTimeout time.Duration) *Handler {
+	if indexTimeout <= 0 {
+		indexTimeout = 60 * time.Second
+	}
+	return &Handler{svc: svc, logger: logger, principal: principal, chatConfig: chat, indexTimeout: indexTimeout}
 }
 
 // AnonymousPrincipal is the explicit full-access principal for unauthenticated
@@ -37,12 +42,20 @@ func AnonymousPrincipal(*gin.Context) shared.Principal {
 }
 
 func (h *Handler) health(c *gin.Context) {
-	c.JSON(http.StatusOK, HealthResponse{Status: "ok", Chat: h.chatConfig})
+	vectors := "not_indexed"
+	if h.svc != nil {
+		vectors = h.svc.VectorsState()
+	}
+	c.JSON(http.StatusOK, HealthResponse{Status: "ok", Vectors: vectors, Chat: h.chatConfig})
 }
 
 // ponytail: public local-tool endpoint; add rate limiting before exposing beyond localhost.
 func (h *Handler) index(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	timeout := h.indexTimeout
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
 
 	files, sections, err := h.svc.Index(ctx)

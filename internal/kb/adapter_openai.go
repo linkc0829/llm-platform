@@ -246,13 +246,19 @@ func (o *OpenAIClient) Embed(ctx context.Context, texts []string) ([][]float32, 
 }
 
 func (o *OpenAIClient) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	var requestOptions []option.RequestOption
+	if o.chat.ForwardUser {
+		if principalID := principalIDFromContext(ctx); principalID != "" {
+			requestOptions = append(requestOptions, option.WithHeader("X-On-Behalf-Of", principalID))
+		}
+	}
 	response, err := o.embedClient.Embeddings.New(ctx, openai.EmbeddingNewParams{
 		Input: openai.EmbeddingNewParamsInputUnion{
 			OfArrayOfStrings: texts,
 		},
 		Model:          o.embedModel,
 		EncodingFormat: openai.EmbeddingNewParamsEncodingFormatFloat,
-	})
+	}, requestOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("openai embed: %w", err)
 	}

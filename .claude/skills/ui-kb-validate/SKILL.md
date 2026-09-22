@@ -128,6 +128,22 @@ make run                                        # 重新編譯並啟動服務(�
 > (`ui-kb-merge-import`:重併全部來源 → check → import → `/index`);
 > 只改 Go 程式碼時不必重新 import,但**一定要重編並重啟**。兩者都改就兩者都做。
 
+### 前置與運行驗證分工:三層防線
+
+在執行與解讀評估時，三道檢查各司其職，不可混淆:
+
+| 層級 | 檢查機制 | 驗證標的 | 時機與行為 |
+| :--- | :--- | :--- | :--- |
+| **1. 程式碼/Prompt 一致性** | `make prompt-check` (或比對 `/health` 的 `chat.prompt`) | 本地原始碼 vs 運行中行程之 prompt 指紋 | 啟動後人工/指令檢查:防「改了原始碼卻忘記重編或重啟舊 binary」。 |
+| **2. 向量就緒閘門** | `run_eval.py` 前置 `GET /health` (`vectors == "ok"`) | 服務中向量索引狀態 (排除 `stale`、`not_indexed`、`disabled`) | `run_eval.py` 啟動自動檢查:發出任何 `/chat` 之前 fail-fast 終止，防舊索引跑出假分數。 |
+| **3. 檢索策略有效性** | `run_eval.py` 輸出之 `strategy` 統計與明細 | 單題查詢是否實際成功走 `hybrid` (BM25+向量) | 評估結束後判讀:若退化為 `markdown` (純 BM25)，代表特定查詢向量檢索失效，需修正 embedding/檢索端點。 |
+
+> ⚠️ **`vectors=ok` 不等於 Gateway 已接受當前模型名稱。**
+> `/health` 的 `vectors=ok` 僅證明本機已載入與配置相符的向量索引；但若 Gateway 未配置該模型或拒絕請求，查詢時的向量檢索仍會退化為 `markdown` (純 BM25)。切換設定或重建索引後，**務必先發送一題 `/chat` 探測，確認回應之 `strategy` 為 `hybrid`**，再執行完整驗收。
+
+> ⚠️ **跑新一輪驗收請指定新的 `KB_EVAL_OUT` 或清理舊檔。**
+> `run_eval.py` 具有斷點續跑機制；若沿用舊的輸出路徑（預設 `eval_out.json`），先前已完成的題目會被跳過並沿用舊結果。切換模型或修改後驗收，請指定新檔名（如 `$env:KB_EVAL_OUT = "eval_out_v2.json"`）或刪除舊 checkpoint。
+
 複製 `templates/run_eval.py`,填 `EVAL_DIR`(= `eval/<Team>/`),執行。它做四件事:
 
 1. **跑全部 `*-eval.yaml`**,按題型分組統計 —— 各題型對應不同子系統,總分沒有意義:

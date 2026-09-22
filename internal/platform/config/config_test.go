@@ -266,4 +266,97 @@ func TestLoadGatewayConfig(t *testing.T) {
 			}
 		})
 	})
+
+	// Missing embed model when embed upstream URL is set must fail startup:
+	// otherwise the model binding check is silently disabled and incompatible vectors can pollute index.
+	t.Run("embed_upstream_without_model_fails", func(t *testing.T) {
+		runInDir(t, "GATEWAY_UPSTREAM_BASE_URL=http://localhost:8000\nGATEWAY_EMBED_UPSTREAM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai\n", func(t *testing.T) {
+			_, err := LoadGateway()
+			if err == nil {
+				t.Fatal("expected error when GATEWAY_EMBED_UPSTREAM_BASE_URL is set without GATEWAY_EMBED_MODEL")
+			}
+		})
+	})
+
+	t.Run("embed_upstream_with_model_preserves_version_path", func(t *testing.T) {
+		runInDir(t, "GATEWAY_UPSTREAM_BASE_URL=http://localhost:8000\nGATEWAY_EMBED_UPSTREAM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/\nGATEWAY_EMBED_MODEL=gemini-embedding-2\nGATEWAY_EMBED_UPSTREAM_API_KEY=test-embed-key\n", func(t *testing.T) {
+			cfg, err := LoadGateway()
+			if err != nil {
+				t.Fatalf("LoadGateway: %v", err)
+			}
+			if cfg.Gateway.EmbedUpstreamBaseURL != "https://generativelanguage.googleapis.com/v1beta/openai" {
+				t.Errorf("EmbedUpstreamBaseURL = %q, want https://generativelanguage.googleapis.com/v1beta/openai", cfg.Gateway.EmbedUpstreamBaseURL)
+			}
+			if cfg.Gateway.EmbedModel != "gemini-embedding-2" {
+				t.Errorf("EmbedModel = %q, want gemini-embedding-2", cfg.Gateway.EmbedModel)
+			}
+			if cfg.Gateway.EmbedUpstreamAPIKey != "test-embed-key" {
+				t.Errorf("EmbedUpstreamAPIKey = %q, want test-embed-key", cfg.Gateway.EmbedUpstreamAPIKey)
+			}
+		})
+	})
+
+	t.Run("embed_model_only_succeeds", func(t *testing.T) {
+		runInDir(t, "GATEWAY_UPSTREAM_BASE_URL=http://localhost:8000\nGATEWAY_EMBED_MODEL=text-embedding-3-small\n", func(t *testing.T) {
+			cfg, err := LoadGateway()
+			if err != nil {
+				t.Fatalf("LoadGateway: %v", err)
+			}
+			if cfg.Gateway.EmbedModel != "text-embedding-3-small" {
+				t.Errorf("EmbedModel = %q, want text-embedding-3-small", cfg.Gateway.EmbedModel)
+			}
+			if cfg.Gateway.EmbedUpstreamBaseURL != "" {
+				t.Errorf("EmbedUpstreamBaseURL = %q, want empty", cfg.Gateway.EmbedUpstreamBaseURL)
+			}
+		})
+	})
+}
+
+func TestLoadKBIndexTimeout(t *testing.T) {
+	unsetEnv(t, "OPENAI_API_KEY")
+	unsetEnv(t, "KB_LLM_MODE")
+	unsetEnv(t, "KB_INDEX_TIMEOUT")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+
+	t.Run("default_index_timeout", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("KB_LLM_MODE=fake\n"), 0o600); err != nil {
+			t.Fatalf("write .env: %v", err)
+		}
+		if err := os.Chdir(dir); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+		defer func() { _ = os.Chdir(cwd) }()
+
+		cfg, err := LoadKB()
+		if err != nil {
+			t.Fatalf("LoadKB: %v", err)
+		}
+		if cfg.KB.IndexTimeout != 60*time.Second {
+			t.Errorf("IndexTimeout = %v, want 60s", cfg.KB.IndexTimeout)
+		}
+	})
+
+	t.Run("custom_index_timeout", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("KB_LLM_MODE=fake\nKB_INDEX_TIMEOUT=10m\n"), 0o600); err != nil {
+			t.Fatalf("write .env: %v", err)
+		}
+		if err := os.Chdir(dir); err != nil {
+			t.Fatalf("chdir: %v", err)
+		}
+		defer func() { _ = os.Chdir(cwd) }()
+
+		cfg, err := LoadKB()
+		if err != nil {
+			t.Fatalf("LoadKB: %v", err)
+		}
+		if cfg.KB.IndexTimeout != 10*time.Minute {
+			t.Errorf("IndexTimeout = %v, want 10m", cfg.KB.IndexTimeout)
+		}
+	})
 }

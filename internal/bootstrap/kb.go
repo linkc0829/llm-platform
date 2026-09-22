@@ -3,9 +3,11 @@ package bootstrap
 
 import (
 	"strings"
+	"time"
 
 	"github.com/linkc0829/llm-platform/internal/kb"
 	"github.com/linkc0829/llm-platform/internal/platform/config"
+	"github.com/linkc0829/llm-platform/internal/platform/httpserver"
 )
 
 // NewKBService constructs the shared KB service for HTTP and MCP entrypoints.
@@ -39,5 +41,21 @@ func ChatRuntime(cfg *config.Config) *kb.ChatConfig {
 		Prompt:      kb.GroundingFingerprint(),
 		Temperature: cfg.OpenAI.ChatTemperature,
 		MaxTokens:   cfg.OpenAI.ChatMaxTokens,
+	}
+}
+
+// KBServerConfig computes the HTTP server configuration for the KB service,
+// scaling WriteTimeout to accommodate full corpus reindexing while maintaining
+// a safety buffer above KB_INDEX_TIMEOUT.
+func KBServerConfig(cfg *config.Config, bindAddress string) httpserver.Config {
+	indexTimeout := cfg.KB.IndexTimeout
+	if indexTimeout <= 0 {
+		indexTimeout = 60 * time.Second
+	}
+	writeTimeout := max(30*time.Second, indexTimeout+10*time.Second)
+	return httpserver.Config{
+		Port:         cfg.HTTP.Port,
+		BindAddress:  bindAddress,
+		WriteTimeout: &writeTimeout,
 	}
 }

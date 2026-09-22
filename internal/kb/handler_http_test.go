@@ -2,6 +2,7 @@ package kb
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -26,6 +27,7 @@ type fakeHandlerService struct {
 	chatErr       error
 	chatQuery     string
 	chatOwnerID   string
+	vectorsState  string
 }
 
 func (f *fakeHandlerService) Index(_ context.Context) (int, int, error) {
@@ -36,6 +38,13 @@ func (f *fakeHandlerService) ChatWithMetrics(_ context.Context, principal shared
 	f.chatQuery = query
 	f.chatOwnerID = principal.ID
 	return f.chatAnswer, f.chatSessionID, f.chatMetrics, f.chatErr
+}
+
+func (f *fakeHandlerService) VectorsState() string {
+	if f.vectorsState != "" {
+		return f.vectorsState
+	}
+	return "ok"
 }
 
 func TestHandlerChat(t *testing.T) {
@@ -181,9 +190,9 @@ func TestHandlerHealthReportsChatRuntime(t *testing.T) {
 		{
 			name: "configured",
 			chat: &ChatConfig{Model: "gemma-4-26b-a4b", Prompt: GroundingFingerprint(), Temperature: 0, MaxTokens: 1024},
-			want: `{"status":"ok","chat":{"model":"gemma-4-26b-a4b","prompt":"` + GroundingFingerprint() + `","temperature":0,"max_tokens":1024}}`,
+			want: `{"status":"ok","vectors":"ok","chat":{"model":"gemma-4-26b-a4b","prompt":"` + GroundingFingerprint() + `","temperature":0,"max_tokens":1024}}`,
 		},
-		{name: "fake_llm_mode", chat: nil, want: `{"status":"ok"}`},
+		{name: "fake_llm_mode", chat: nil, want: `{"status":"ok","vectors":"ok"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -199,6 +208,36 @@ func TestHandlerHealthReportsChatRuntime(t *testing.T) {
 			}
 			if w.Body.String() != tt.want {
 				t.Errorf("GET /health body = %s, want %s", w.Body.String(), tt.want)
+			}
+		})
+	}
+}
+
+func TestHandlerHealthReportsVectorsState(t *testing.T) {
+	states := []string{"ok", "stale", "not_indexed", "disabled"}
+	for _, state := range states {
+		t.Run(state, func(t *testing.T) {
+			svc := &fakeHandlerService{vectorsState: state}
+			r := gin.New()
+			RegisterRoutes(r.Group(""), &Handler{svc: svc, principal: AnonymousPrincipal},
+				RouteGuards{AllowUnauthenticated: true})
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/health", nil))
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("GET /health status = %d, want 200", w.Code)
+			}
+
+			var resp map[string]any
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("unmarshal /health body: %v", err)
+			}
+			if _, ok := resp["vectors"]; !ok {
+				t.Errorf("expected 'vectors' field in response, got %s", w.Body.String())
+			}
+			if resp["vectors"] != state {
+				t.Errorf("vectors = %v, want %s", resp["vectors"], state)
 			}
 		})
 	}

@@ -73,8 +73,20 @@ func main() {
 		}
 	}()
 
+	var embedURL *url.URL
+	if cfg.Gateway.EmbedUpstreamBaseURL != "" {
+		embedURL, err = url.Parse(cfg.Gateway.EmbedUpstreamBaseURL)
+		if err != nil {
+			lg.Sugar().Fatalf("embed upstream base url: %v", err)
+		}
+	}
+
 	limiter := gateway.NewLimiter(cfg.Gateway.MaxInflightGlobal, cfg.Gateway.MaxInflightPerUser)
-	h := gateway.NewHandler(upstreamURL, cfg.Gateway.UpstreamAPIKey, limiter, authStore, cfg.Gateway.UpstreamHeaderTimeout, lg)
+	h := gateway.NewHandler(
+		upstreamURL, cfg.Gateway.UpstreamAPIKey,
+		embedURL, cfg.Gateway.EmbedUpstreamAPIKey, cfg.Gateway.EmbedModel,
+		limiter, authStore, cfg.Gateway.UpstreamHeaderTimeout, lg,
+	)
 
 	engine := httpserver.New(lg)
 	gateway.RegisterRoutes(engine.Group(""), h)
@@ -95,9 +107,15 @@ func main() {
 		close(errs)
 	}()
 
+	embedUpstreamStr := ""
+	if embedURL != nil {
+		embedUpstreamStr = embedURL.String()
+	}
 	lg.Info("gateway started",
 		zap.Int("port", cfg.Gateway.Port),
 		zap.String("upstream", upstreamURL.String()),
+		zap.String("embed_upstream", embedUpstreamStr),
+		zap.String("embed_model", cfg.Gateway.EmbedModel),
 		zap.Duration("upstream_header_timeout", cfg.Gateway.UpstreamHeaderTimeout),
 		zap.Int("max_inflight_global", cfg.Gateway.MaxInflightGlobal),
 		zap.Int("max_inflight_per_user", cfg.Gateway.MaxInflightPerUser),

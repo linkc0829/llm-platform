@@ -25,26 +25,37 @@ const metricsContextKey contextKey = "gateway.metrics"
 // Handler proxies OpenAI-compatible requests with admission control,
 // stream usage extraction, and structured usage logging.
 type Handler struct {
-	upstreamURL *url.URL
-	upstreamKey string
-	limiter     *Limiter
-	resolver    TokenResolver
-	logger      *zap.Logger
-	proxy       *httputil.ReverseProxy
+	upstreamURL      *url.URL
+	upstreamKey      string
+	embedUpstreamURL *url.URL
+	embedUpstreamKey string
+	embedModel       string
+	limiter          *Limiter
+	resolver         TokenResolver
+	logger           *zap.Logger
+	proxy            *httputil.ReverseProxy
 }
 
 // NewHandler constructs a gateway Handler and initializes its reverse proxy.
-func NewHandler(upstreamURL *url.URL, upstreamKey string, limiter *Limiter, resolver TokenResolver, headerTimeout time.Duration, logger *zap.Logger) *Handler {
+// ponytail: one embed model/upstream pair. Upgrade to a model→upstream map when a second model appears.
+func NewHandler(
+	upstreamURL *url.URL, upstreamKey string,
+	embedUpstreamURL *url.URL, embedUpstreamKey, embedModel string,
+	limiter *Limiter, resolver TokenResolver, headerTimeout time.Duration, logger *zap.Logger,
+) *Handler {
 	if headerTimeout <= 0 {
 		headerTimeout = 300 * time.Second
 	}
 
 	h := &Handler{
-		upstreamURL: upstreamURL,
-		upstreamKey: upstreamKey,
-		limiter:     limiter,
-		resolver:    resolver,
-		logger:      logger,
+		upstreamURL:      upstreamURL,
+		upstreamKey:      upstreamKey,
+		embedUpstreamURL: embedUpstreamURL,
+		embedUpstreamKey: embedUpstreamKey,
+		embedModel:       embedModel,
+		limiter:          limiter,
+		resolver:         resolver,
+		logger:           logger,
 	}
 
 	transport := &http.Transport{
@@ -65,9 +76,23 @@ func NewHandler(upstreamURL *url.URL, upstreamKey string, limiter *Limiter, reso
 		Transport:     transport,
 		FlushInterval: -1,
 		Rewrite: func(pr *httputil.ProxyRequest) {
-			pr.SetURL(upstreamURL)
-			if upstreamKey != "" {
-				pr.Out.Header.Set("Authorization", "Bearer "+upstreamKey)
+			targetURL := upstreamURL
+			targetKey := upstreamKey
+			isEmbed := isEmbeddingPath(pr.In.URL.Path) && embedUpstreamURL != nil
+
+			if isEmbed {
+				targetURL = embedUpstreamURL
+				targetKey = embedUpstreamKey
+				pr.SetURL(targetURL)
+				inboundTrimmed := strings.TrimPrefix(pr.In.URL.Path, "/v1")
+				pr.Out.URL.Path = singleJoiningSlash(targetURL.Path, inboundTrimmed)
+				pr.Out.URL.RawPath = ""
+			} else {
+				pr.SetURL(targetURL)
+			}
+
+			if targetKey != "" {
+				pr.Out.Header.Set("Authorization", "Bearer "+targetKey)
 			} else {
 				pr.Out.Header.Del("Authorization")
 			}
@@ -80,7 +105,8 @@ func NewHandler(upstreamURL *url.URL, upstreamKey string, limiter *Limiter, reso
 					contentType := resp.Header.Get("Content-Type")
 					if strings.Contains(contentType, "text/event-stream") {
 						resp.Body = newSSETrackingReader(resp.Body, m, time.Now())
-					} else if isCompletionPath(resp.Request.URL.Path) {
+					} else if isCompletionPath(resp.Request.URL.Path) || isEmbeddingPath(resp.Request.URL.Path) {
+						// ponytail: buffers whole embedding response (~2MB per 32-text index batch), cap if memory matters.
 						resp.Body = newJSONTrackingReader(resp.Body, m)
 					}
 				}
@@ -185,7 +211,50 @@ func (h *Handler) Proxy(c *gin.Context) {
 	}
 	defer release()
 
-	if c.Request.Method == http.MethodPost && isCompletionPath(c.Request.URL.Path) {
+	if isEmbeddingPath(c.Request.URL.Path) {
+		if h.embedModel != "" {
+			if c.Request.Method != http.MethodPost {
+				metrics.setError("method_not_allowed")
+				metrics.setStatusCode(http.StatusMethodNotAllowed)
+				c.AbortWithStatusJSON(http.StatusMethodNotAllowed, gin.H{"error": "method not allowed"})
+				return
+			}
+
+			bodyBytes, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20))
+			if err != nil {
+				metrics.setError("payload_too_large")
+				metrics.setStatusCode(http.StatusRequestEntityTooLarge)
+				c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{"error": "payload too large"})
+				return
+			}
+
+			var payload map[string]any
+			dec := json.NewDecoder(bytes.NewReader(bodyBytes))
+			dec.UseNumber()
+			decodeErr := dec.Decode(&payload)
+
+			var modelStr string
+			if decodeErr == nil && payload != nil {
+				if m, ok := payload["model"].(string); ok {
+					modelStr = m
+				}
+			}
+			if modelStr != "" {
+				metrics.setModel(modelStr)
+			}
+
+			if decodeErr != nil || modelStr == "" || modelStr != h.embedModel {
+				metrics.setError("unknown_embedding_model")
+				metrics.setStatusCode(http.StatusBadRequest)
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "unknown_embedding_model"})
+				return
+			}
+
+			c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			c.Request.ContentLength = int64(len(bodyBytes))
+			c.Request.Header.Set("Content-Length", strconv.Itoa(len(bodyBytes)))
+		}
+	} else if c.Request.Method == http.MethodPost && isCompletionPath(c.Request.URL.Path) {
 		bodyBytes, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20))
 		if err != nil {
 			metrics.setError("payload_too_large")
@@ -234,6 +303,22 @@ func (h *Handler) Healthz(c *gin.Context) {
 
 func isCompletionPath(path string) bool {
 	return strings.HasSuffix(path, "/chat/completions") || strings.HasSuffix(path, "/completions")
+}
+
+func isEmbeddingPath(path string) bool {
+	return strings.HasSuffix(strings.TrimRight(path, "/"), "/embeddings")
+}
+
+func singleJoiningSlash(a, b string) string {
+	aslash := strings.HasSuffix(a, "/")
+	bslash := strings.HasPrefix(b, "/")
+	switch {
+	case aslash && bslash:
+		return a + b[1:]
+	case !aslash && !bslash:
+		return a + "/" + b
+	}
+	return a + b
 }
 
 func defaultWorkload(w string) string {
