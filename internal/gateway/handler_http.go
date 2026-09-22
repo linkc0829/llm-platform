@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -97,6 +98,10 @@ func NewHandler(
 				pr.Out.Header.Del("Authorization")
 			}
 			pr.Out.Header.Del("X-On-Behalf-Of")
+			// Forwarding the caller's Accept-Encoding makes Transport hand back the
+			// upstream's gzip bytes undecoded, and usage parsing then silently
+			// yields zero. Dropping it lets Transport negotiate and decompress.
+			pr.Out.Header.Del("Accept-Encoding")
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			if m, ok := resp.Request.Context().Value(metricsContextKey).(*requestMetrics); ok {
@@ -194,6 +199,9 @@ func (h *Handler) Proxy(c *gin.Context) {
 		if ttft > 0 {
 			fields = append(fields, zap.Int64("ttft_ms", ttft.Milliseconds()))
 		}
+		if inputCount, inputChars := metrics.input(); inputCount > 0 {
+			fields = append(fields, zap.Int("input_count", inputCount), zap.Int("input_chars", inputChars))
+		}
 		if errStr != "" {
 			fields = append(fields, zap.String("error", errStr))
 		}
@@ -212,14 +220,14 @@ func (h *Handler) Proxy(c *gin.Context) {
 	defer release()
 
 	if isEmbeddingPath(c.Request.URL.Path) {
-		if h.embedModel != "" {
-			if c.Request.Method != http.MethodPost {
+		if c.Request.Method != http.MethodPost {
+			if h.embedModel != "" {
 				metrics.setError("method_not_allowed")
 				metrics.setStatusCode(http.StatusMethodNotAllowed)
 				c.AbortWithStatusJSON(http.StatusMethodNotAllowed, gin.H{"error": "method not allowed"})
 				return
 			}
-
+		} else {
 			bodyBytes, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20))
 			if err != nil {
 				metrics.setError("payload_too_large")
@@ -238,12 +246,15 @@ func (h *Handler) Proxy(c *gin.Context) {
 				if m, ok := payload["model"].(string); ok {
 					modelStr = m
 				}
+				// Some upstreams (Google's OpenAI-compatible endpoint) return no usage
+				// for embeddings, so the input size is the only cost signal left.
+				metrics.setInput(countEmbeddingInput(payload["input"]))
 			}
 			if modelStr != "" {
 				metrics.setModel(modelStr)
 			}
 
-			if decodeErr != nil || modelStr == "" || modelStr != h.embedModel {
+			if h.embedModel != "" && (decodeErr != nil || modelStr == "" || modelStr != h.embedModel) {
 				metrics.setError("unknown_embedding_model")
 				metrics.setStatusCode(http.StatusBadRequest)
 				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "unknown_embedding_model"})
@@ -303,6 +314,24 @@ func (h *Handler) Healthz(c *gin.Context) {
 
 func isCompletionPath(path string) bool {
 	return strings.HasSuffix(path, "/chat/completions") || strings.HasSuffix(path, "/completions")
+}
+
+// countEmbeddingInput counts the texts in an embeddings "input" (a string or an
+// array of strings / token arrays) and their characters. Token arrays count as
+// inputs with zero characters.
+func countEmbeddingInput(input any) (count, chars int) {
+	switch v := input.(type) {
+	case string:
+		return 1, utf8.RuneCountInString(v)
+	case []any:
+		for _, item := range v {
+			count++
+			if text, ok := item.(string); ok {
+				chars += utf8.RuneCountInString(text)
+			}
+		}
+	}
+	return count, chars
 }
 
 func isEmbeddingPath(path string) bool {

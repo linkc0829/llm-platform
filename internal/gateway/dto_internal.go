@@ -18,6 +18,8 @@ type requestMetrics struct {
 	model            string
 	statusCode       int
 	ttft             time.Duration
+	inputCount       int
+	inputChars       int
 	hasFirstToken    bool
 	err              string
 	isStream         bool
@@ -36,6 +38,18 @@ func (m *requestMetrics) setUsage(prompt, completion int64) {
 	defer m.mu.Unlock()
 	m.promptTokens = prompt
 	m.completionTokens = completion
+}
+
+func (m *requestMetrics) setInput(count, chars int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.inputCount, m.inputChars = count, chars
+}
+
+func (m *requestMetrics) input() (count, chars int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.inputCount, m.inputChars
 }
 
 func (m *requestMetrics) setTTFT(d time.Duration) {

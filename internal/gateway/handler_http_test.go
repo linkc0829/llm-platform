@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -897,4 +898,96 @@ func TestHandler_Embeddings_RoutingAndModelBinding(t *testing.T) {
 			t.Errorf("chatCalls = %d, want 0", atomic.LoadInt32(&chatCalls))
 		}
 	})
+}
+
+// lastUsage sends one request through the gateway and returns the context of
+// the gateway_usage line it logged.
+func lastUsage(t *testing.T, engine *gin.Engine, req *http.Request) (*closeNotifyingRecorder, map[string]any) {
+	t.Helper()
+	core, logs := observer.New(zap.InfoLevel)
+	defer zap.ReplaceGlobals(zap.New(core))()
+
+	rec := newCloseNotifyingRecorder()
+	engine.ServeHTTP(rec, req)
+	entries := logs.FilterMessage("gateway_usage").All()
+	if len(entries) != 1 {
+		t.Fatalf("gateway_usage entries = %d, want 1", len(entries))
+	}
+	return rec, entries[0].ContextMap()
+}
+
+// A client that sends Accept-Encoding: gzip (every Go http.Client does) used to
+// have the header forwarded, so Transport returned the upstream's gzip bytes
+// undecoded and usage parsing silently logged zero tokens. Chat hid this only
+// because vLLM does not compress; Google does.
+func TestHandler_GzipUpstreamUsageStillParsed(t *testing.T) {
+	resolver := &mockResolver{principals: map[string]shared.Principal{"tok": {ID: "alice"}}}
+	body := `{"choices":[{"message":{"content":"hi"}}],"model":"m","usage":{"prompt_tokens":42,"completion_tokens":7}}`
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		w.Header().Set("Content-Encoding", "gzip")
+		zw := gzip.NewWriter(w)
+		_, _ = zw.Write([]byte(body))
+		_ = zw.Close()
+	})
+	engine, _ := setupTestGateway(t, upstream, resolver, 10, 5)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"m"}`))
+	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec, usage := lastUsage(t, engine, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if usage["prompt_tokens"] != int64(42) || usage["completion_tokens"] != int64(7) {
+		t.Errorf("tokens = %v/%v, want 42/7", usage["prompt_tokens"], usage["completion_tokens"])
+	}
+	if !json.Valid(rec.Body.Bytes()) {
+		t.Errorf("client body is not plain JSON: %q", rec.Body.String())
+	}
+}
+
+// Google's OpenAI-compatible embeddings endpoint returns no usage at all, so
+// the input size is the only cost signal A3 has for embeddings.
+func TestHandler_EmbeddingInputCounted(t *testing.T) {
+	resolver := &mockResolver{principals: map[string]shared.Principal{"tok": {ID: "alice"}}}
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"index":0,"embedding":[0.1]}],"model":"gemini-embedding-2"}`))
+	})
+
+	tests := []struct {
+		name      string
+		body      string
+		wantCount int
+		wantChars int
+	}{
+		{"array_counts_runes_not_bytes", `{"model":"gemini-embedding-2","input":["你好","abc"]}`, 2, 5},
+		{"single_string", `{"model":"gemini-embedding-2","input":"hello"}`, 1, 5},
+		{"token_arrays_count_without_chars", `{"model":"gemini-embedding-2","input":[[1,2,3]]}`, 1, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// No GATEWAY_EMBED_MODEL: counting must not depend on model binding.
+			engine, _ := setupTestGateway(t, upstream, resolver, 10, 5)
+			req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(tt.body))
+			req.Header.Set("Authorization", "Bearer tok")
+			rec, usage := lastUsage(t, engine, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if usage["input_count"] != int64(tt.wantCount) || usage["input_chars"] != int64(tt.wantChars) {
+				t.Errorf("input_count/input_chars = %v/%v, want %d/%d", usage["input_count"], usage["input_chars"], tt.wantCount, tt.wantChars)
+			}
+			if usage["prompt_tokens"] != int64(0) {
+				t.Errorf("prompt_tokens = %v, want 0 (upstream reported none)", usage["prompt_tokens"])
+			}
+		})
+	}
 }
