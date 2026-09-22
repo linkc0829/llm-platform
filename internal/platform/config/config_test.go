@@ -267,4 +267,3 @@ func TestLoadGatewayConfig(t *testing.T) {
 		})
 	})
 }
-

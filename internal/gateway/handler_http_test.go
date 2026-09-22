@@ -612,4 +612,3 @@ func TestHandler_UpstreamTimeout_504(t *testing.T) {
 		t.Errorf("error = %q, want upstream_timeout", errResp["error"])
 	}
 }
-

@@ -154,4 +154,3 @@ func TestReloadPreservesPreviousSnapshotOnBadFile(t *testing.T) {
 		t.Errorf("expected alice, got %s", p.Name)
 	}
 }
-

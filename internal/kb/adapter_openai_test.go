@@ -278,4 +278,3 @@ func TestOpenAIClient_Answer_XOnBehalfOf(t *testing.T) {
 		})
 	}
 }
-

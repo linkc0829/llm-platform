@@ -156,4 +156,3 @@ func TestCreateServiceToken(t *testing.T) {
 		t.Errorf("resolved principal mismatch: %+v", p)
 	}
 }
-
