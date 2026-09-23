@@ -124,7 +124,7 @@ func metricsFrom(c *gin.Context) *requestMetrics {
 	return c.Request.Context().Value(metricsContextKey).(*requestMetrics)
 }
 
-// prepareChat injects stream_options.include_usage into stream requests so
+// prepareChat forces stream_options.include_usage on stream requests so
 // usage can be logged. An unparseable body is forwarded unchanged: the
 // upstream owns chat request validation.
 func prepareChat(c *gin.Context) {
@@ -141,9 +141,10 @@ func prepareChat(c *gin.Context) {
 				streamOpts = make(map[string]any)
 				payload["stream_options"] = streamOpts
 			}
-			if _, exists := streamOpts["include_usage"]; !exists {
-				streamOpts["include_usage"] = true
-			}
+			// Usage is always requested so metering is not up to the client; a
+			// client that did not ask for it never sees the extra chunk.
+			metrics.hideUsage = streamOpts["include_usage"] != true
+			streamOpts["include_usage"] = true
 
 			if newBody, err := json.Marshal(payload); err == nil {
 				body = newBody

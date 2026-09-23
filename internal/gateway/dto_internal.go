@@ -23,6 +23,9 @@ type requestMetrics struct {
 	hasFirstToken    bool
 	err              string
 	isStream         bool
+	// hideUsage drops the usage-only SSE chunk the gateway asked for on the
+	// client's behalf. Set before proxying, read once the response starts.
+	hideUsage bool
 }
 
 func (m *requestMetrics) setModel(model string) {
@@ -100,11 +103,16 @@ type chatChunk struct {
 	Usage   *chatCompletionUsage `json:"usage"`
 }
 
+// sseTrackingReader records usage and TTFT from an SSE stream and passes it on
+// line by line, dropping the usage-only chunk when metrics.hideUsage is set.
 type sseTrackingReader struct {
 	rc        io.ReadCloser
 	metrics   *requestMetrics
 	startTime time.Time
-	lineBuf   bytes.Buffer
+	lineBuf   bytes.Buffer // bytes read but not yet a full line
+	out       bytes.Buffer // lines ready for the client
+	scratch   [4096]byte
+	err       error
 }
 
 func newSSETrackingReader(rc io.ReadCloser, metrics *requestMetrics, startTime time.Time) *sseTrackingReader {
@@ -116,24 +124,40 @@ func newSSETrackingReader(rc io.ReadCloser, metrics *requestMetrics, startTime t
 }
 
 func (r *sseTrackingReader) Read(p []byte) (int, error) {
-	n, err := r.rc.Read(p)
-	if n > 0 {
-		r.lineBuf.Write(p[:n])
-		r.processLines()
-	}
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			// Process any trailing line left in buffer
+	for r.out.Len() == 0 && r.err == nil {
+		n, err := r.rc.Read(r.scratch[:])
+		if n > 0 {
+			r.lineBuf.Write(r.scratch[:n])
 			r.processLines()
-		} else if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "canceled") || strings.Contains(err.Error(), "broken pipe") {
-			r.metrics.setError("client_canceled")
-		} else if isTimeoutError(err) {
-			r.metrics.setError("upstream_timeout")
-		} else {
-			r.metrics.setError(err.Error())
+		}
+		if err != nil {
+			r.recordError(err)
+			if errors.Is(err, io.EOF) && r.lineBuf.Len() > 0 {
+				// A last line without a trailing newline still belongs to the client.
+				r.processLine(r.lineBuf.Bytes())
+				r.lineBuf.Reset()
+			}
+			r.err = err
 		}
 	}
-	return n, err
+	if r.out.Len() > 0 {
+		return r.out.Read(p)
+	}
+	return 0, r.err
+}
+
+func (r *sseTrackingReader) recordError(err error) {
+	switch {
+	case errors.Is(err, io.EOF):
+	case errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "canceled") || strings.Contains(err.Error(), "broken pipe"):
+		// Headers already went out as 200; the log must still say the answer never arrived.
+		r.metrics.setError("client_canceled")
+		r.metrics.setStatusCode(499)
+	case isTimeoutError(err):
+		r.metrics.setError("upstream_timeout")
+	default:
+		r.metrics.setError(err.Error())
+	}
 }
 
 func (r *sseTrackingReader) Close() error {
@@ -142,45 +166,55 @@ func (r *sseTrackingReader) Close() error {
 
 func (r *sseTrackingReader) processLines() {
 	for {
-		lineBytes, err := r.lineBuf.ReadBytes('\n')
-		if err != nil {
-			// Not a full line yet; restore unread bytes back into buffer
-			if len(lineBytes) > 0 {
-				r.lineBuf.Write(lineBytes)
-			}
+		i := bytes.IndexByte(r.lineBuf.Bytes(), '\n')
+		if i < 0 {
+			return
+		}
+		line := r.lineBuf.Next(i + 1)
+		r.processLine(line)
+	}
+}
+
+// processLine records metrics from one SSE line and queues it for the client
+// unless it is the usage-only chunk the client did not ask for. The blank line
+// that ended that event still goes out; an event with no data is ignored.
+func (r *sseTrackingReader) processLine(line []byte) {
+	if !r.track(strings.TrimSpace(string(line))) {
+		r.out.Write(line)
+	}
+}
+
+// track reports whether the line should be hidden from the client.
+func (r *sseTrackingReader) track(line string) bool {
+	if !strings.HasPrefix(line, "data:") {
+		return false
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	if payload == "" || payload == "[DONE]" {
+		return false
+	}
+
+	var chunk chatChunk
+	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+		return false
+	}
+
+	if chunk.Model != "" {
+		r.metrics.setModel(chunk.Model)
+	}
+
+	for _, ch := range chunk.Choices {
+		if ch.Delta.Content != "" || ch.Text != "" {
+			r.metrics.setTTFT(time.Since(r.startTime))
 			break
 		}
-
-		line := strings.TrimSpace(string(lineBytes))
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" || payload == "[DONE]" {
-			continue
-		}
-
-		var chunk chatChunk
-		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			continue
-		}
-
-		if chunk.Model != "" {
-			r.metrics.setModel(chunk.Model)
-		}
-
-		for _, ch := range chunk.Choices {
-			if ch.Delta.Content != "" || ch.Text != "" {
-				r.metrics.setTTFT(time.Since(r.startTime))
-				break
-			}
-		}
-
-		if chunk.Usage != nil {
-			r.metrics.setUsage(chunk.Usage.PromptTokens, chunk.Usage.CompletionTokens)
-		}
 	}
+
+	if chunk.Usage != nil {
+		r.metrics.setUsage(chunk.Usage.PromptTokens, chunk.Usage.CompletionTokens)
+		return r.metrics.hideUsage && len(chunk.Choices) == 0
+	}
+	return false
 }
 
 type jsonTrackingReader struct {
@@ -205,7 +239,9 @@ func (r *jsonTrackingReader) Read(p []byte) (int, error) {
 		if errors.Is(err, io.EOF) {
 			r.parseResponse()
 		} else if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "canceled") || strings.Contains(err.Error(), "broken pipe") {
+			// Headers already went out as 200; the log must still say the answer never arrived.
 			r.metrics.setError("client_canceled")
+			r.metrics.setStatusCode(499)
 		} else if isTimeoutError(err) {
 			r.metrics.setError("upstream_timeout")
 		} else {

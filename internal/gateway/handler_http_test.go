@@ -322,43 +322,58 @@ func TestHandler_StreamBodyInjection_And_UsageExtraction(t *testing.T) {
 	}
 }
 
-func TestHandler_StreamChatCompletions_PreservesExplicitFalseIncludeUsage(t *testing.T) {
-	resolver := &mockResolver{
-		principals: map[string]shared.Principal{
-			"tok": {ID: "u1"},
-		},
+// Metering must not be up to the client: every stream is sent upstream with
+// include_usage=true, whatever the client asked. A client that did not ask for
+// usage must not see the extra choices-less chunk either, because clients that
+// read choices[0] on every chunk break on it (PR #7 review).
+func TestHandler_StreamUsageAlwaysMeteredAndHiddenUnlessRequested(t *testing.T) {
+	resolver := &mockResolver{principals: map[string]shared.Principal{"tok": {ID: "u1"}}}
+	const usageChunk = `{"choices":[],"usage":{"prompt_tokens":15,"completion_tokens":8,"total_tokens":23}}`
+
+	tests := []struct {
+		name          string
+		streamOptions string
+		wantUsage     bool
+	}{
+		{name: "not_requested", streamOptions: ``, wantUsage: false},
+		{name: "explicit_false", streamOptions: `,"stream_options":{"include_usage":false}`, wantUsage: false},
+		{name: "explicit_true", streamOptions: `,"stream_options":{"include_usage":true}`, wantUsage: true},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var upstreamBody []byte
+			upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				upstreamBody, _ = io.ReadAll(r.Body)
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(http.StatusOK)
+				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n")
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", usageChunk)
+				_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+			})
+			engine, _ := setupTestGateway(t, upstream, resolver, 10, 5)
 
-	var upstreamReceivedBody []byte
-	mockUpstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamReceivedBody, _ = io.ReadAll(r.Body)
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
-	})
+			body := `{"model":"gpt-4o","stream":true` + tt.streamOptions + `,"messages":[]}`
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer tok")
+			rec, fields := lastUsage(t, engine, req)
 
-	engine, _ := setupTestGateway(t, mockUpstream, resolver, 10, 5)
-
-	reqBody := `{"model":"gpt-4o","stream":true,"stream_options":{"include_usage":false},"messages":[{"role":"user","content":"hello"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
-	req.Header.Set("Authorization", "Bearer tok")
-	rec := newCloseNotifyingRecorder()
-	engine.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-
-	var receivedMap map[string]any
-	if err := json.Unmarshal(upstreamReceivedBody, &receivedMap); err != nil {
-		t.Fatalf("unmarshal upstream body: %v", err)
-	}
-	opts, ok := receivedMap["stream_options"].(map[string]any)
-	if !ok {
-		t.Fatalf("stream_options missing: %#v", receivedMap)
-	}
-	if opts["include_usage"] != false {
-		t.Errorf("stream_options.include_usage = %v, want false", opts["include_usage"])
+			var sent struct {
+				StreamOptions map[string]any `json:"stream_options"`
+			}
+			if err := json.Unmarshal(upstreamBody, &sent); err != nil || sent.StreamOptions["include_usage"] != true {
+				t.Errorf("upstream stream_options = %v, want include_usage true", sent.StreamOptions)
+			}
+			if fields["prompt_tokens"] != int64(15) || fields["completion_tokens"] != int64(8) {
+				t.Errorf("logged tokens = %v/%v, want 15/8", fields["prompt_tokens"], fields["completion_tokens"])
+			}
+			got := rec.Body.String()
+			if strings.Contains(got, `"usage"`) != tt.wantUsage {
+				t.Errorf("client saw usage chunk = %t, want %t; body: %q", !tt.wantUsage, tt.wantUsage, got)
+			}
+			if !strings.Contains(got, `"Hi"`) || !strings.Contains(got, "[DONE]") {
+				t.Errorf("content or [DONE] missing: %q", got)
+			}
+		})
 	}
 }
 
@@ -520,6 +535,54 @@ func TestHandler_ClientCancellationPropagatesAndReleasesSlot(t *testing.T) {
 		// Upstream context cancellation verified!
 	case <-time.After(1 * time.Second):
 		t.Fatal("upstream did not receive context cancellation")
+	}
+}
+
+// A client that drops mid-stream got headers with 200 already, but it never got
+// an answer. Logged as 200 it inflates success counts and hides abandonment,
+// which A2 and the usage report rely on (found by cmd/gwload).
+func TestHandler_MidStreamCancelLoggedAs499(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	zap.ReplaceGlobals(zap.New(core))
+	t.Cleanup(func() { zap.ReplaceGlobals(zap.NewNop()) })
+
+	resolver := &mockResolver{principals: map[string]shared.Principal{"tok": {ID: "u1"}}}
+	upstreamDone := make(chan struct{})
+	mockUpstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(upstreamDone)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Start\"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	})
+	engine, _ := setupTestGateway(t, mockUpstream, resolver, 10, 5)
+	gwServer := httptest.NewServer(engine)
+	defer gwServer.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, gwServer.URL+"/v1/chat/completions", strings.NewReader(`{"stream":true}`))
+	req.Header.Set("Authorization", "Bearer tok")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("client Do error: %v", err)
+	}
+	_, _ = resp.Body.Read(make([]byte, 128))
+	cancel()
+	_ = resp.Body.Close()
+	<-upstreamDone
+
+	deadline := time.Now().Add(time.Second)
+	for logs.FilterMessage("gateway_usage").Len() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	entries := logs.FilterMessage("gateway_usage").All()
+	if len(entries) != 1 {
+		t.Fatalf("gateway_usage entries = %d, want 1", len(entries))
+	}
+	fields := entries[0].ContextMap()
+	if fields["status"] != int64(499) || fields["error"] != "client_canceled" {
+		t.Errorf("status = %v, error = %v, want 499 client_canceled", fields["status"], fields["error"])
 	}
 }
 
