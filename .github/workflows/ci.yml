@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to the same PR makes the running checks moot.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Latest patch of the go.mod minor, so govulncheck judges a patched stdlib.
+  GO_VERSION: "1.25.x"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$unformatted" ]; then echo "Run gofmt on:"; echo "$unformatted"; exit 1; fi
+      - name: go mod tidy
+        run: go mod tidy && git diff --exit-code go.mod go.sum
+      - name: go vet
+        run: go vet ./...
+      # depguard in here enforces the hexagonal layer rules (CLAUDE.md R1).
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8
+          # The prebuilt v1.64.8 binary predates Go 1.25 and refuses a 1.25 module.
+          install-mode: goinstall
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - run: go build ./...
+      - run: go test -race -short -count=1 ./...
+
+  # A2: admission, cancellation, timeout and restart behaviour of the real
+  # gateway binary against a mock upstream. No GPU or API key needed.
+  gwload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - run: go run ./cmd/gwload -out metrics/gateway-a2.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gateway-a2-report
+          path: metrics/gateway-a2.json
+          if-no-files-found: ignore
+
+  # Guards run_eval.py scoring and its /health gate; stdlib only.
+  eval-selfcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: python .claude/skills/ui-kb-validate/templates/selfcheck_fixes.py
+      - run: python .claude/skills/ui-kb-validate/templates/selfcheck_health.py
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      # Fails only on vulnerabilities the code actually reaches.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
