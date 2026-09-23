@@ -453,9 +453,9 @@ func TestHandler_TransportConfiguration(t *testing.T) {
 
 	// Custom timeout
 	hCustom := NewHandler(uURL, "key", nil, "", "", NewLimiter(10, 5), nil, 120*time.Second, zap.NewNop())
-	trCustom, ok := hCustom.proxy.Transport.(*http.Transport)
+	trCustom, ok := hCustom.chatProxy.Transport.(*http.Transport)
 	if !ok {
-		t.Fatalf("expected *http.Transport, got %T", hCustom.proxy.Transport)
+		t.Fatalf("expected *http.Transport, got %T", hCustom.chatProxy.Transport)
 	}
 	if trCustom.ResponseHeaderTimeout != 120*time.Second {
 		t.Errorf("ResponseHeaderTimeout = %v, want 120s", trCustom.ResponseHeaderTimeout)
@@ -466,9 +466,9 @@ func TestHandler_TransportConfiguration(t *testing.T) {
 
 	// Default fallback to 300s when <= 0
 	hDefault := NewHandler(uURL, "key", nil, "", "", NewLimiter(10, 5), nil, 0, zap.NewNop())
-	trDefault, ok := hDefault.proxy.Transport.(*http.Transport)
+	trDefault, ok := hDefault.chatProxy.Transport.(*http.Transport)
 	if !ok {
-		t.Fatalf("expected *http.Transport, got %T", hDefault.proxy.Transport)
+		t.Fatalf("expected *http.Transport, got %T", hDefault.chatProxy.Transport)
 	}
 	if trDefault.ResponseHeaderTimeout != 300*time.Second {
 		t.Errorf("default ResponseHeaderTimeout = %v, want 300s", trDefault.ResponseHeaderTimeout)
@@ -834,7 +834,10 @@ func TestHandler_Embeddings_RoutingAndModelBinding(t *testing.T) {
 		}
 	})
 
-	t.Run("non_post_returns_405_when_binding_active", func(t *testing.T) {
+	// Only allow-listed routes reach an upstream: anything else would be sent
+	// with the gateway's own upstream key, and a non-POST embeddings call
+	// would skip the model binding that only runs on the body.
+	t.Run("unlisted_route_never_forwarded", func(t *testing.T) {
 		h := NewHandler(
 			chatURL, "chat-key",
 			embedURL, "embed-key", "gemini-embedding-2",
@@ -843,18 +846,49 @@ func TestHandler_Embeddings_RoutingAndModelBinding(t *testing.T) {
 		r := gin.New()
 		RegisterRoutes(r.Group(""), h)
 
-		atomic.StoreInt32(&embedCalls, 0)
+		for _, tc := range []struct{ method, path string }{
+			{http.MethodGet, "/v1/embeddings"},
+			{http.MethodPost, "/v1/foo/embeddings"},
+			{http.MethodPost, "/v1/files"},
+			{http.MethodGet, "/v1/chat/completions"},
+		} {
+			atomic.StoreInt32(&chatCalls, 0)
+			atomic.StoreInt32(&embedCalls, 0)
 
-		req := httptest.NewRequest(http.MethodGet, "/v1/embeddings", nil)
-		req.Header.Set("Authorization", "Bearer tok-trusted")
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{"model":"gemini-embedding-2"}`))
+			req.Header.Set("Authorization", "Bearer tok-trusted")
+			rec := newCloseNotifyingRecorder()
+			r.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusNotFound {
+				t.Errorf("%s %s: status = %d, want 404", tc.method, tc.path, rec.Code)
+			}
+			if calls := atomic.LoadInt32(&chatCalls) + atomic.LoadInt32(&embedCalls); calls != 0 {
+				t.Errorf("%s %s: upstream calls = %d, want 0", tc.method, tc.path, calls)
+			}
+		}
+	})
+
+	t.Run("models_goes_to_chat_upstream", func(t *testing.T) {
+		h := NewHandler(
+			chatURL, "chat-key",
+			embedURL, "embed-key", "gemini-embedding-2",
+			NewLimiter(10, 5), resolver, 0, zap.NewNop(),
+		)
+		r := gin.New()
+		RegisterRoutes(r.Group(""), h)
+
+		atomic.StoreInt32(&chatCalls, 0)
+		req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		req.Header.Set("Authorization", "Bearer tok-untrusted")
 		rec := newCloseNotifyingRecorder()
 		r.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusMethodNotAllowed {
-			t.Fatalf("status = %d, want 405", rec.Code)
+		if rec.Code != http.StatusOK || atomic.LoadInt32(&chatCalls) != 1 {
+			t.Fatalf("status = %d, chatCalls = %d, want 200 and 1", rec.Code, atomic.LoadInt32(&chatCalls))
 		}
-		if atomic.LoadInt32(&embedCalls) != 0 {
-			t.Errorf("embedCalls = %d, want 0", atomic.LoadInt32(&embedCalls))
+		if lastPath != "/v1/models" || lastAuth != "Bearer chat-key" {
+			t.Errorf("path = %q, auth = %q, want /v1/models with chat key", lastPath, lastAuth)
 		}
 	})
 
