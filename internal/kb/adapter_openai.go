@@ -26,40 +26,26 @@ type ChatOptions struct {
 
 // OpenAIClient implements LLM and Embedder.
 type OpenAIClient struct {
-	client              openai.Client
-	embedClient         openai.Client
-	chatModel           openai.ChatModel
-	embedModel          openai.EmbeddingModel
-	embedBaseURL        string
-	geminiThinkingLevel string
-	chat                ChatOptions
-	forwardEmbedUser    bool
+	client     openai.Client
+	chatModel  openai.ChatModel
+	embedModel openai.EmbeddingModel
+	baseURL    string
+	chat       ChatOptions
 }
 
-func NewOpenAIClient(apiKey, baseURL, embedBaseURL, embedAPIKey, geminiThinkingLevel, chatModel, embedModel string, chat ChatOptions) *OpenAIClient {
+func NewOpenAIClient(apiKey, baseURL, chatModel, embedModel string, chat ChatOptions) *OpenAIClient {
 	opts := openAIOptions(apiKey, baseURL)
-	if embedBaseURL == "" {
-		embedBaseURL = baseURL
-	}
-	if embedAPIKey == "" {
-		embedAPIKey = apiKey
-	}
-	forwardEmbedUser := chat.ForwardUser && baseURL != "" &&
-		strings.TrimRight(embedBaseURL, "/") == strings.TrimRight(baseURL, "/")
 	return &OpenAIClient{
-		client:              openai.NewClient(opts...),
-		embedClient:         openai.NewClient(openAIOptions(embedAPIKey, embedBaseURL)...),
-		chatModel:           openai.ChatModel(chatModel),
-		embedModel:          openai.EmbeddingModel(embedModel),
-		embedBaseURL:        embedBaseURL,
-		geminiThinkingLevel: geminiThinkingLevel,
-		chat:                chat,
-		forwardEmbedUser:    forwardEmbedUser,
+		client:     openai.NewClient(opts...),
+		chatModel:  openai.ChatModel(chatModel),
+		embedModel: openai.EmbeddingModel(embedModel),
+		baseURL:    baseURL,
+		chat:       chat,
 	}
 }
 
 func (o *OpenAIClient) EmbedIdentity() string {
-	return string(o.embedModel) + "@" + o.embedBaseURL
+	return string(o.embedModel) + "@" + o.baseURL
 }
 
 func openAIOptions(apiKey, baseURL string) []option.RequestOption {
@@ -207,11 +193,6 @@ func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Sect
 	if o.chat.MaxTokens > 0 {
 		params.MaxTokens = openai.Int(o.chat.MaxTokens)
 	}
-	if o.geminiThinkingLevel != "" {
-		params.SetExtraFields(map[string]any{"extra_body": map[string]any{
-			"google": map[string]any{"thinking_config": map[string]string{"thinking_level": o.geminiThinkingLevel}},
-		}})
-	}
 	var requestOptions []option.RequestOption
 	if o.chat.ForwardUser {
 		if principalID := principalIDFromContext(ctx); principalID != "" {
@@ -251,12 +232,12 @@ func (o *OpenAIClient) Embed(ctx context.Context, texts []string) ([][]float32, 
 
 func (o *OpenAIClient) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
 	var requestOptions []option.RequestOption
-	if o.forwardEmbedUser {
+	if o.chat.ForwardUser {
 		if principalID := principalIDFromContext(ctx); principalID != "" {
 			requestOptions = append(requestOptions, option.WithHeader("X-On-Behalf-Of", principalID))
 		}
 	}
-	response, err := o.embedClient.Embeddings.New(ctx, openai.EmbeddingNewParams{
+	response, err := o.client.Embeddings.New(ctx, openai.EmbeddingNewParams{
 		Input: openai.EmbeddingNewParamsInputUnion{
 			OfArrayOfStrings: texts,
 		},
