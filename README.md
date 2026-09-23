@@ -2,6 +2,8 @@
 
 A local Go service that indexes Markdown files from `docs/`, retrieves relevant sections with hybrid BM25 + vector search, and answers questions with cited, grounded sources — over HTTP (`/chat`) or MCP (`search_kb`) for coding agents.
 
+The repo also ships `cmd/gateway`, a minimal inference gateway that sits in front of the OpenAI-compatible backend. It authenticates callers, caps concurrent requests, and logs usage for every LLM call, including the KB's own. See [Inference gateway](#inference-gateway).
+
 **A fresh clone ships no corpus.** `docs/` and `eval/` are gitignored: they hold `make import` output, which is reproducible from a team's exporter bundle and runs to several megabytes of screenshots per team. Import at least one bundle before the service can answer anything — without it `POST /index` reports zero sections and every question is refused.
 
 ## Quick Start
@@ -33,10 +35,11 @@ Invoke-RestMethod -Method Post -Uri http://localhost:12598/chat `
 
 ## Endpoints
 
-- `GET /health` - health check.
-- `POST /index` - requires a bearer token with the `Indexer` capability; parses and audits all Markdown below `docs/`, rejects unknown or drifting section access metadata before saving or embedding, then loads the in-memory index.
+- `GET /health` - public health check. It reports `vectors` (`ok`, `stale`, `not_indexed` or `disabled`), the chat model, its decoding parameters, and the grounding-prompt fingerprint. `stale` means the index is loaded but its vectors are missing or were built by another embedding model, so retrieval is BM25-only until `POST /index` runs again.
+- `POST /index` - requires a bearer token with the `Indexer` capability; parses and audits all Markdown below `docs/`, rejects unknown or drifting section access metadata before saving or embedding, then loads the in-memory index. The request times out after `KB_INDEX_TIMEOUT` (default `60s`), and the server's write timeout is raised to match.
 - `POST /chat` - requires any valid bearer token and answers a question from indexed sections only, returning `answer`, `grounded`, `sources`, `images`, `strategy`, and `session_id`. `grounded` is `false` when retrieval fell below threshold or the model declined to answer despite context — branch on it instead of parsing the answer text. Transient upstream failures are reported as such: `429` when the model provider rate-limits (echoing its `Retry-After` if it sent one), `503` when the provider is unavailable or times out. Retry those; a `500` means the request itself failed and retrying will not help.
 - `/mcp` - Streamable HTTP MCP endpoint exposing the read-only `search_kb` tool; it requires a bearer token.
+- `/admin/tokens` routes are registered only when authentication is enabled. The API can grant `indexer`, but it can never create or delete an admin principal.
 - `GET /admin/tokens` - requires an admin bearer token; lists principal IDs, names, capabilities, and creation times without token hashes.
 - `POST /admin/tokens` - requires an admin bearer token; creates a non-admin token and returns its plaintext exactly once. A request `admin` field is ignored.
 - `DELETE /admin/tokens/:id` - requires an admin bearer token; revokes a non-admin principal by immutable ID. Admin principals can only be revoked by the local `kbtoken` CLI.
@@ -66,7 +69,11 @@ go run ./cmd/kbtoken create-admin -name platform-admin
 go run ./cmd/kbtoken list
 go run ./cmd/kbtoken rotate-admin -id <old-admin-id>
 go run ./cmd/kbtoken revoke-admin -id <old-admin-id>
+# Non-admin token with a workload label; -trusted lets it send X-On-Behalf-Of to the gateway:
+go run ./cmd/kbtoken create -name kb-service -workload rag -trusted
 ```
+
+`create` accepts `-workload` (`rag`, `fim`, `agent`, `chat`), `-teams`, `-all-teams`, `-engineering` and `-indexer`. `-trusted` is available only through this CLI; the `/admin/tokens` API never grants it.
 
 `rotate-admin` creates a new principal ID and leaves the old admin alive until it is explicitly revoked. Revoking the last admin requires `-force`; if that is intentional, `create-admin` can bootstrap a new admin from the resulting empty auth file. A stale lock is never removed automatically—stop any writer and remove `auth.json.lock` manually only after confirming no process owns it.
 
@@ -145,6 +152,27 @@ npx -y @modelcontextprotocol/inspector --cli ./bin/kbmcp.exe --method tools/call
 
 Drop `--cli` to open the browser UI instead: `npx @modelcontextprotocol/inspector ./bin/kbmcp.exe`, then open the printed `http://localhost:6274/?MCP_PROXY_AUTH_TOKEN=...` URL and drive `search_kb` from the Tools tab. `search_kb` needs a reachable chat model (`OPENAI_BASE_URL`) to generate the answer.
 
+## Inference gateway
+
+`cmd/gateway` (`make run-gateway`, default port `12599`) forwards an allow-list of OpenAI-compatible routes to the upstream model server. It uses its own upstream key, so callers never see it:
+
+| Route | Upstream |
+| --- | --- |
+| `POST /v1/chat/completions`, `POST /v1/completions`, `GET /v1/models` | `GATEWAY_UPSTREAM_BASE_URL` |
+| `POST /v1/embeddings` | `GATEWAY_EMBED_UPSTREAM_BASE_URL` if set, otherwise the chat upstream |
+| `GET /healthz` | answered by the gateway, no auth |
+
+Any other path or method returns 404 and is never forwarded.
+
+- **Auth.** Bearer tokens come from the same `KB_AUTH_FILE` as `cmd/kb`. The gateway checks the file's mtime every 10s and reloads it. If a reload finds the file invalid, the previous snapshot stays in place. A file with no principals is valid and rejects every token.
+- **Per-user attribution.** Only a `trusted` token may name the real caller in `X-On-Behalf-Of`. The header is ignored for every other token, and the gateway always strips it before forwarding. Set `KB_LLM_FORWARD_USER=true` so the KB attaches it. The KB never sends it on embeddings to an endpoint other than `OPENAI_BASE_URL`.
+- **Admission.** In-flight requests are capped per effective user (`GATEWAY_MAX_INFLIGHT_PER_USER`) and globally (`GATEWAY_MAX_INFLIGHT`). A request over either cap gets `429` and `Retry-After: 1` right away. Nothing is queued. The counters live in process memory: they reset on restart and are not shared between instances.
+- **Embedding model binding.** When `GATEWAY_EMBED_MODEL` is set, a `/v1/embeddings` request with any other model name, no model, or invalid JSON gets `400` and is never forwarded. The gateway checks only the requested name, not which model the backend has loaded.
+- **Usage log.** Each authenticated request writes one `gateway_usage` line with `user_id`, `principal_id`, `workload`, `model`, `status`, token counts, latency, `ttft_ms` for streams, and `error`. Embedding lines also carry `input_count` and `input_chars`, because some upstreams return no usage. Prompts and responses are never logged. For streams, the gateway adds `stream_options.include_usage=true` unless the client set it. A client that sends `false` keeps it, and that request logs 0 tokens.
+- **Errors.** Client cancel is logged as `499`. An upstream that sends no response headers within `GATEWAY_UPSTREAM_HEADER_TIMEOUT` gets `504`. Other upstream failures get `502` with only an error code in the body. A body over 4MB gets `413`, and an unreadable body gets `400`. The server has no write timeout, so long streams are never cut off.
+
+To route the KB through the gateway, set `OPENAI_BASE_URL=http://localhost:12599/v1` and make `OPENAI_API_KEY` a trusted gateway token (`kbtoken create -trusted -workload rag`). `KB_EMBED_MODEL` must equal `GATEWAY_EMBED_MODEL`. `.env.example` holds this setup.
+
 ## Configuration
 
 Environment variables:
@@ -153,19 +181,31 @@ Environment variables:
 - `APP_SHUTDOWN_TIMEOUT` - graceful shutdown timeout, default `10s`.
 - `KB_AUTH_FILE` - required auth snapshot for `cmd/kb` unless auth is explicitly disabled.
 - `KB_AUTH_DISABLED=true` - local-only escape hatch; the server forces `127.0.0.1` and leaves HTTP/MCP routes unguarded.
-- `/admin/tokens` is registered only when authentication is enabled. The network API can grant `indexer`, but it can never create or delete an admin principal.
 - `LOG_LEVEL` - zap log level, default `info`.
-- `LOG_ENCODING` - zap encoding, default `json`. The `jq` recipes for the query log assume `json`.
+- `LOG_ENCODING` - zap encoding, default `json`.
 - `LOG_OUTPUT` - comma-separated log sinks, default `stdout,log/kb.log`. Missing directories are created. Set `stdout` alone to stop writing files. `cmd/kbmcp` drops any `stdout` sink regardless: its stdout carries the JSON-RPC protocol.
-- `OPENAI_API_KEY` - required unless `KB_LLM_MODE=fake`, or when `OPENAI_BASE_URL` points at a keyless endpoint (e.g. Ollama).
+- `OPENAI_API_KEY` - a trusted gateway token, created with `kbtoken create -name <name> -workload rag -trusted`. The gateway resolves it and forwards with its own upstream key, so no provider key belongs here.
 - `KB_LLM_MODE` - `openai` or `fake`, default `openai`.
-- `OPENAI_BASE_URL` - OpenAI-compatible endpoint for chat and embeddings. Point it at a local Ollama (`http://localhost:11434/v1`) to keep the corpus off the network.
+- `OPENAI_BASE_URL` - the gateway, `http://localhost:12599/v1`. Chat and embeddings both go through it. The KB does not connect to a cloud provider directly.
 - `KB_EMBED_BASE_URL` - optional separate endpoint for embeddings; falls back to `OPENAI_BASE_URL`.
 - `KB_EMBED_API_KEY` - optional API key for embeddings; defaults to `OPENAI_API_KEY` when unset.
 - `KB_GEMINI_THINKING_LEVEL` - optional Gemini OpenAI-compatible thinking level; set `minimal` to disable Gemma 4 thinking.
-- `KB_CHAT_MODEL` / `KB_EMBED_MODEL` - chat and embedding model names (e.g. `llama3.1:8b` / `snowflake-arctic-embed2`).
+- `KB_CHAT_MODEL` / `KB_EMBED_MODEL` - chat and embedding model names (e.g. `gemma-4-26b-a4b` / `gemini-embedding-2`; defaults `gpt-4o-mini` / `text-embedding-3-small`). `KB_EMBED_MODEL` must equal `GATEWAY_EMBED_MODEL`.
 - `KB_CHAT_TEMPERATURE` (default `0`) / `KB_CHAT_MAX_TOKENS` (default `1024`, `0` omits the field) - decoding parameters sent with every chat completion. Without them the upstream falls back to the served model's own `generation_config`, so repeated eval rounds disagree with each other. `GET /health` reports both alongside the chat model and a fingerprint of the grounding prompt, so an eval run can prove which build answered it.
 - `KB_DOCS_DIR` / `KB_INDEX_DIR` - source and local index directories.
+- `KB_INDEX_TIMEOUT` - `POST /index` timeout, default `60s`. The KB server's write timeout is `max(30s, KB_INDEX_TIMEOUT + 10s)`. Raise it, for example to `10m`, when a full reindex re-embeds the whole corpus.
+- `KB_LLM_FORWARD_USER` - default `false`. When `true`, the caller's principal ID goes out as `X-On-Behalf-Of`. Enable it only when `OPENAI_BASE_URL` is the internal gateway, never a public provider.
+
+Gateway (`cmd/gateway`; it reads `KB_AUTH_FILE` and the `LOG_*` variables too):
+
+- `GATEWAY_UPSTREAM_BASE_URL` - required chat upstream. A trailing `/v1` is stripped.
+- `GATEWAY_UPSTREAM_API_KEY` - key sent upstream. If empty, the caller's `Authorization` header is removed and nothing is sent.
+- `GATEWAY_UPSTREAM_HEADER_TIMEOUT` - default `300s`.
+- `GATEWAY_EMBED_UPSTREAM_BASE_URL` / `GATEWAY_EMBED_UPSTREAM_API_KEY` - optional dedicated embedding upstream. Give the full base URL including its version path (Google's is `/v1beta/openai`). This requires `GATEWAY_EMBED_MODEL`.
+- `GATEWAY_EMBED_MODEL` - the only embedding model name accepted.
+- `GATEWAY_MAX_INFLIGHT` (default `64`) / `GATEWAY_MAX_INFLIGHT_PER_USER` (default `4`) - `0` or less means unlimited.
+- `GATEWAY_PORT` - default `12599`.
+- `GATEWAY_LOG_OUTPUT` - default `stdout,log/gateway.log`.
 
 ## Retrieval
 
@@ -321,12 +361,15 @@ All imported documents currently share one access level and one index. If a team
 
 ```text
 cmd/kb/                  # HTTP server entrypoint (/health, /index, /chat)
+cmd/gateway/             # inference gateway in front of the model upstream
 cmd/kbimport/            # transactional team-bundle importer (make import)
 cmd/kbdistill/           # L1 action-chain distiller, zero LLM (make distill)
 cmd/kbtoken/             # local auth bootstrap, admin rotation, and revoke CLI
 cmd/kbmcp/               # stdio MCP server exposing the search_kb tool
 internal/kb/             # domain, service, ports, handlers, markdown/vector repos, LLM adapters
 internal/auth/           # token resolution, CRUD, atomic auth persistence, HTTP adapter
+internal/gateway/        # gateway auth, admission limiter, reverse proxy, usage log
+internal/shared/         # zero-dependency value objects (Principal)
 internal/mcpserver/      # MCP adapter over the kb service (parallel to the HTTP handler)
 internal/bootstrap/      # composition root — wires the kb service for both entrypoints
 internal/platform/config # env/.env config loading
@@ -362,8 +405,10 @@ kb_sources.json          # which sources compose each team; internal absolute pa
 
 ```powershell
 make run            # run ./cmd/kb; needs $env:KB_AUTH_FILE or KB_AUTH_DISABLED=true
+make run-gateway    # run ./cmd/gateway; needs GATEWAY_UPSTREAM_BASE_URL and KB_AUTH_FILE
 make mcp            # run the stdio MCP server (dev / Inspector only)
-make build          # build bin/kb.exe, bin/kbmcp.exe, and bin/kbtoken.exe
+make build          # build bin/kb.exe, bin/kbmcp.exe, bin/kbtoken.exe, and bin/gateway.exe
+make prompt-check   # compare the grounding-prompt fingerprint of source, built binaries, and running service
 make import         # import a team bundle (FROM must be a merged tree — see above)
 make distill        # generate L1 action chains into a staging bundle, before -check
 make test           # go test -race -short -count=1 ./...
@@ -371,6 +416,7 @@ make test-cover     # same, plus coverage.out and coverage.html
 make lint           # golangci-lint run ./...
 make fmt            # gofmt -s -w .
 make vet            # go vet ./...
+make tidy           # go mod tidy
 make verify         # lint + test
 make hooks-install  # enable .githooks/pre-commit (gofmt, lint, unit tests)
 make clean          # remove bin/ and coverage output (PowerShell/cmd only)
