@@ -11,7 +11,6 @@ func TestLoadKBReadsEnvFileAliases(t *testing.T) {
 	unsetEnv(t, "OPENAI_API_KEY")
 	unsetEnv(t, "APP_PORT")
 	unsetEnv(t, "KB_CHAT_MODEL")
-	unsetEnv(t, "KB_EMBED_BASE_URL")
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -22,7 +21,7 @@ func TestLoadKBReadsEnvFileAliases(t *testing.T) {
 	}()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY='test-key'\nAPP_PORT=9090\nKB_CHAT_MODEL=test-model\nKB_EMBED_BASE_URL=http://embed.example/v1\nKB_EMBED_API_KEY=embed-key\nKB_GEMINI_THINKING_LEVEL=minimal\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY='test-key'\nAPP_PORT=9090\nKB_CHAT_MODEL=test-model\nKB_GEMINI_THINKING_LEVEL=minimal\n"), 0o600); err != nil {
 		t.Fatalf("write .env: %v", err)
 	}
 	if err := os.Chdir(dir); err != nil {
@@ -41,12 +40,6 @@ func TestLoadKBReadsEnvFileAliases(t *testing.T) {
 	}
 	if cfg.OpenAI.ChatModel != "test-model" {
 		t.Fatalf("OpenAI chat model = %q, want test-model", cfg.OpenAI.ChatModel)
-	}
-	if cfg.OpenAI.EmbedBaseURL != "http://embed.example/v1" {
-		t.Fatalf("OpenAI embed base URL = %q, want test URL", cfg.OpenAI.EmbedBaseURL)
-	}
-	if cfg.OpenAI.EmbedAPIKey != "embed-key" {
-		t.Fatalf("OpenAI embed API key = %q, want embed-key", cfg.OpenAI.EmbedAPIKey)
 	}
 	if cfg.OpenAI.GeminiThinkingLevel != "minimal" {
 		t.Fatalf("Gemini thinking level = %q, want minimal", cfg.OpenAI.GeminiThinkingLevel)

@@ -165,7 +165,7 @@ Drop `--cli` to open the browser UI instead: `npx @modelcontextprotocol/inspecto
 Any other path or method returns 404 and is never forwarded.
 
 - **Auth.** Bearer tokens come from the same `KB_AUTH_FILE` as `cmd/kb`. The gateway checks the file's mtime every 10s and reloads it. If a reload finds the file invalid, the previous snapshot stays in place. A file with no principals is valid and rejects every token.
-- **Per-user attribution.** Only a `trusted` token may name the real caller in `X-On-Behalf-Of`. The header is ignored for every other token, and the gateway always strips it before forwarding. Set `KB_LLM_FORWARD_USER=true` so the KB attaches it. The KB never sends it on embeddings to an endpoint other than `OPENAI_BASE_URL`.
+- **Per-user attribution.** Only a `trusted` token may name the real caller in `X-On-Behalf-Of`. The header is ignored for every other token, and the gateway always strips it before forwarding. Set `KB_LLM_FORWARD_USER=true` so the KB attaches it.
 - **Admission.** In-flight requests are capped per effective user (`GATEWAY_MAX_INFLIGHT_PER_USER`) and globally (`GATEWAY_MAX_INFLIGHT`). A request over either cap gets `429` and `Retry-After: 1` right away. Nothing is queued. The counters live in process memory: they reset on restart and are not shared between instances.
 - **Embedding model binding.** When `GATEWAY_EMBED_MODEL` is set, a `/v1/embeddings` request with any other model name, no model, or invalid JSON gets `400` and is never forwarded. The gateway checks only the requested name, not which model the backend has loaded.
 - **Usage log.** Each authenticated request writes one `gateway_usage` line with `user_id`, `principal_id`, `workload`, `model`, `status`, token counts, latency, `ttft_ms` for streams, and `error`. Embedding lines also carry `input_count` and `input_chars`, because some upstreams return no usage. Prompts and responses are never logged. For streams, the gateway adds `stream_options.include_usage=true` unless the client set it. A client that sends `false` keeps it, and that request logs 0 tokens.
@@ -187,8 +187,6 @@ Environment variables:
 - `OPENAI_API_KEY` - a trusted gateway token, created with `kbtoken create -name <name> -workload rag -trusted`. The gateway resolves it and forwards with its own upstream key, so no provider key belongs here.
 - `KB_LLM_MODE` - `openai` or `fake`, default `openai`.
 - `OPENAI_BASE_URL` - the gateway, `http://localhost:12599/v1`. Chat and embeddings both go through it. The KB does not connect to a cloud provider directly.
-- `KB_EMBED_BASE_URL` - optional separate endpoint for embeddings; falls back to `OPENAI_BASE_URL`.
-- `KB_EMBED_API_KEY` - optional API key for embeddings; defaults to `OPENAI_API_KEY` when unset.
 - `KB_GEMINI_THINKING_LEVEL` - optional Gemini OpenAI-compatible thinking level; set `minimal` to disable Gemma 4 thinking.
 - `KB_CHAT_MODEL` / `KB_EMBED_MODEL` - chat and embedding model names (e.g. `gemma-4-26b-a4b` / `gemini-embedding-2`; defaults `gpt-4o-mini` / `text-embedding-3-small`). `KB_EMBED_MODEL` must equal `GATEWAY_EMBED_MODEL`.
 - `KB_CHAT_TEMPERATURE` (default `0`) / `KB_CHAT_MAX_TOKENS` (default `1024`, `0` omits the field) - decoding parameters sent with every chat completion. Without them the upstream falls back to the served model's own `generation_config`, so repeated eval rounds disagree with each other. `GET /health` reports both alongside the chat model and a fingerprint of the grounding prompt, so an eval run can prove which build answered it.

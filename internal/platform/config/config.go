@@ -10,10 +10,10 @@ import (
 )
 
 type Config struct {
-	App    AppConfig
-	HTTP   HTTPConfig
-	Logger LoggerConfig
-	OpenAI OpenAIConfig
+	App     AppConfig
+	HTTP    HTTPConfig
+	Logger  LoggerConfig
+	OpenAI  OpenAIConfig
 	KB      KBConfig
 	Auth    AuthConfig
 	Gateway GatewayConfig
@@ -45,8 +45,6 @@ type OpenAIConfig struct {
 	APIKey              string `mapstructure:"api_key"`
 	LLMMode             string `mapstructure:"llm_mode"`
 	BaseURL             string `mapstructure:"base_url"`
-	EmbedBaseURL        string `mapstructure:"embed_base_url"`
-	EmbedAPIKey         string `mapstructure:"embed_api_key"`
 	GeminiThinkingLevel string `mapstructure:"gemini_thinking_level"`
 	ChatModel           string `mapstructure:"chat_model"`
 	EmbedModel          string `mapstructure:"embed_model"`
@@ -173,8 +171,6 @@ func newViper() *viper.Viper {
 		"openai.api_key":                  "OPENAI_API_KEY",
 		"openai.llm_mode":                 "KB_LLM_MODE",
 		"openai.base_url":                 "OPENAI_BASE_URL",
-		"openai.embed_base_url":           "KB_EMBED_BASE_URL",
-		"openai.embed_api_key":            "KB_EMBED_API_KEY",
 		"openai.gemini_thinking_level":    "KB_GEMINI_THINKING_LEVEL",
 		"openai.chat_model":               "KB_CHAT_MODEL",
 		"openai.chat_temperature":         "KB_CHAT_TEMPERATURE",

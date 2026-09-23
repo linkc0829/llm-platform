@@ -27,39 +27,27 @@ type ChatOptions struct {
 // OpenAIClient implements LLM and Embedder.
 type OpenAIClient struct {
 	client              openai.Client
-	embedClient         openai.Client
 	chatModel           openai.ChatModel
 	embedModel          openai.EmbeddingModel
-	embedBaseURL        string
+	baseURL             string
 	geminiThinkingLevel string
 	chat                ChatOptions
-	forwardEmbedUser    bool
 }
 
-func NewOpenAIClient(apiKey, baseURL, embedBaseURL, embedAPIKey, geminiThinkingLevel, chatModel, embedModel string, chat ChatOptions) *OpenAIClient {
+func NewOpenAIClient(apiKey, baseURL, geminiThinkingLevel, chatModel, embedModel string, chat ChatOptions) *OpenAIClient {
 	opts := openAIOptions(apiKey, baseURL)
-	if embedBaseURL == "" {
-		embedBaseURL = baseURL
-	}
-	if embedAPIKey == "" {
-		embedAPIKey = apiKey
-	}
-	forwardEmbedUser := chat.ForwardUser && baseURL != "" &&
-		strings.TrimRight(embedBaseURL, "/") == strings.TrimRight(baseURL, "/")
 	return &OpenAIClient{
 		client:              openai.NewClient(opts...),
-		embedClient:         openai.NewClient(openAIOptions(embedAPIKey, embedBaseURL)...),
 		chatModel:           openai.ChatModel(chatModel),
 		embedModel:          openai.EmbeddingModel(embedModel),
-		embedBaseURL:        embedBaseURL,
+		baseURL:             baseURL,
 		geminiThinkingLevel: geminiThinkingLevel,
 		chat:                chat,
-		forwardEmbedUser:    forwardEmbedUser,
 	}
 }
 
 func (o *OpenAIClient) EmbedIdentity() string {
-	return string(o.embedModel) + "@" + o.embedBaseURL
+	return string(o.embedModel) + "@" + o.baseURL
 }
 
 func openAIOptions(apiKey, baseURL string) []option.RequestOption {
@@ -251,12 +239,12 @@ func (o *OpenAIClient) Embed(ctx context.Context, texts []string) ([][]float32, 
 
 func (o *OpenAIClient) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
 	var requestOptions []option.RequestOption
-	if o.forwardEmbedUser {
+	if o.chat.ForwardUser {
 		if principalID := principalIDFromContext(ctx); principalID != "" {
 			requestOptions = append(requestOptions, option.WithHeader("X-On-Behalf-Of", principalID))
 		}
 	}
-	response, err := o.embedClient.Embeddings.New(ctx, openai.EmbeddingNewParams{
+	response, err := o.client.Embeddings.New(ctx, openai.EmbeddingNewParams{
 		Input: openai.EmbeddingNewParamsInputUnion{
 			OfArrayOfStrings: texts,
 		},
