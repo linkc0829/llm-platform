@@ -91,6 +91,7 @@ type chatChunkChoice struct {
 	Delta struct {
 		Content string `json:"content"`
 	} `json:"delta"`
+	Text string `json:"text"`
 }
 
 type chatChunk struct {
@@ -170,7 +171,7 @@ func (r *sseTrackingReader) processLines() {
 		}
 
 		for _, ch := range chunk.Choices {
-			if ch.Delta.Content != "" {
+			if ch.Delta.Content != "" || ch.Text != "" {
 				r.metrics.setTTFT(time.Since(r.startTime))
 				break
 			}

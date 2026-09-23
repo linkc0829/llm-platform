@@ -33,6 +33,7 @@ type OpenAIClient struct {
 	embedBaseURL        string
 	geminiThinkingLevel string
 	chat                ChatOptions
+	forwardEmbedUser    bool
 }
 
 func NewOpenAIClient(apiKey, baseURL, embedBaseURL, embedAPIKey, geminiThinkingLevel, chatModel, embedModel string, chat ChatOptions) *OpenAIClient {
@@ -43,6 +44,8 @@ func NewOpenAIClient(apiKey, baseURL, embedBaseURL, embedAPIKey, geminiThinkingL
 	if embedAPIKey == "" {
 		embedAPIKey = apiKey
 	}
+	forwardEmbedUser := chat.ForwardUser && baseURL != "" &&
+		strings.TrimRight(embedBaseURL, "/") == strings.TrimRight(baseURL, "/")
 	return &OpenAIClient{
 		client:              openai.NewClient(opts...),
 		embedClient:         openai.NewClient(openAIOptions(embedAPIKey, embedBaseURL)...),
@@ -51,6 +54,7 @@ func NewOpenAIClient(apiKey, baseURL, embedBaseURL, embedAPIKey, geminiThinkingL
 		embedBaseURL:        embedBaseURL,
 		geminiThinkingLevel: geminiThinkingLevel,
 		chat:                chat,
+		forwardEmbedUser:    forwardEmbedUser,
 	}
 }
 
@@ -247,7 +251,7 @@ func (o *OpenAIClient) Embed(ctx context.Context, texts []string) ([][]float32, 
 
 func (o *OpenAIClient) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
 	var requestOptions []option.RequestOption
-	if o.chat.ForwardUser {
+	if o.forwardEmbedUser {
 		if principalID := principalIDFromContext(ctx); principalID != "" {
 			requestOptions = append(requestOptions, option.WithHeader("X-On-Behalf-Of", principalID))
 		}

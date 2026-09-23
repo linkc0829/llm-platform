@@ -145,14 +145,27 @@ func newProxy(transport http.RoundTripper, target *url.URL, key string, stripV1 
 	}
 }
 
-// readBody reads the request body under the 4MB cap and answers 413 itself
-// when the cap is exceeded.
+// readBody reads the request body under the 4MB cap and aborts with
+// 413 (too large), 499 (client canceled), or 400 (invalid body) on error.
 func readBody(c *gin.Context, metrics *requestMetrics) ([]byte, bool) {
 	body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20))
 	if err != nil {
-		metrics.setError("payload_too_large")
-		metrics.setStatusCode(http.StatusRequestEntityTooLarge)
-		c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{"error": "payload too large"})
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			metrics.setError("payload_too_large")
+			metrics.setStatusCode(http.StatusRequestEntityTooLarge)
+			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{"error": "payload too large"})
+			return nil, false
+		}
+		if errors.Is(c.Request.Context().Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+			metrics.setError("client_canceled")
+			metrics.setStatusCode(499)
+			c.AbortWithStatus(499)
+			return nil, false
+		}
+		metrics.setError("invalid_body")
+		metrics.setStatusCode(http.StatusBadRequest)
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return nil, false
 	}
 	return body, true

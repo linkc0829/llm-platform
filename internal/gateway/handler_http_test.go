@@ -322,6 +322,46 @@ func TestHandler_StreamBodyInjection_And_UsageExtraction(t *testing.T) {
 	}
 }
 
+func TestHandler_StreamChatCompletions_PreservesExplicitFalseIncludeUsage(t *testing.T) {
+	resolver := &mockResolver{
+		principals: map[string]shared.Principal{
+			"tok": {ID: "u1"},
+		},
+	}
+
+	var upstreamReceivedBody []byte
+	mockUpstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamReceivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
+	})
+
+	engine, _ := setupTestGateway(t, mockUpstream, resolver, 10, 5)
+
+	reqBody := `{"model":"gpt-4o","stream":true,"stream_options":{"include_usage":false},"messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Authorization", "Bearer tok")
+	rec := newCloseNotifyingRecorder()
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	var receivedMap map[string]any
+	if err := json.Unmarshal(upstreamReceivedBody, &receivedMap); err != nil {
+		t.Fatalf("unmarshal upstream body: %v", err)
+	}
+	opts, ok := receivedMap["stream_options"].(map[string]any)
+	if !ok {
+		t.Fatalf("stream_options missing: %#v", receivedMap)
+	}
+	if opts["include_usage"] != false {
+		t.Errorf("stream_options.include_usage = %v, want false", opts["include_usage"])
+	}
+}
+
 func TestHandler_PayloadTooLarge(t *testing.T) {
 	resolver := &mockResolver{
 		principals: map[string]shared.Principal{
@@ -344,6 +384,79 @@ func TestHandler_PayloadTooLarge(t *testing.T) {
 
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("status = %d, want 413 Payload Too Large", rec.Code)
+	}
+}
+
+type failReader struct{}
+
+func (failReader) Read([]byte) (int, error) {
+	return 0, errors.New("simulated network read failure")
+}
+
+func TestHandler_ReadBodyError_ReturnsBadRequest(t *testing.T) {
+	resolver := &mockResolver{
+		principals: map[string]shared.Principal{
+			"tok": {ID: "u1"},
+		},
+	}
+	mockUpstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	engine, _ := setupTestGateway(t, mockUpstream, resolver, 10, 5)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", failReader{})
+	req.Header.Set("Authorization", "Bearer tok")
+
+	rec, usageFields := lastUsage(t, engine, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 Bad Request", rec.Code)
+	}
+	var errResp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("unmarshal error response: %v", err)
+	}
+	if errResp["error"] != "invalid_body" {
+		t.Errorf("error = %q, want invalid_body", errResp["error"])
+	}
+	if errField, ok := usageFields["error"].(string); !ok || errField != "invalid_body" {
+		t.Errorf("logged error field = %v, want invalid_body", usageFields["error"])
+	}
+}
+
+type cancelReader struct{}
+
+func (cancelReader) Read([]byte) (int, error) {
+	return 0, context.Canceled
+}
+
+func TestHandler_ReadBodyCanceled_Returns499(t *testing.T) {
+	resolver := &mockResolver{
+		principals: map[string]shared.Principal{
+			"tok": {ID: "u1"},
+		},
+	}
+	mockUpstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	engine, _ := setupTestGateway(t, mockUpstream, resolver, 10, 5)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", cancelReader{}).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer tok")
+
+	rec, usageFields := lastUsage(t, engine, req)
+
+	if rec.Code != 499 {
+		t.Errorf("status = %d, want 499 Client Closed Request", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("expected empty body for 499, got %q", rec.Body.String())
+	}
+	if errField, ok := usageFields["error"].(string); !ok || errField != "client_canceled" {
+		t.Errorf("logged error field = %v, want client_canceled", usageFields["error"])
 	}
 }
 
@@ -445,6 +558,30 @@ func TestSSETrackingReader_ChunkSplitAcrossReads(t *testing.T) {
 	}
 	if ttft <= 0 {
 		t.Errorf("expected ttft > 0, got %v", ttft)
+	}
+}
+
+func TestSSETrackingReader_CompletionsStreamRecordsTTFT(t *testing.T) {
+	metrics := &requestMetrics{}
+	startTime := time.Now().Add(-10 * time.Millisecond)
+
+	stream := "data: {\"model\":\"text-davinci-003\",\"choices\":[{\"text\":\"hello world\"}]}\n\ndata: [DONE]\n\n"
+	reader := newSSETrackingReader(io.NopCloser(strings.NewReader(stream)), metrics, startTime)
+
+	out, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read all: %v", err)
+	}
+	if string(out) != stream {
+		t.Errorf("read mismatch: %q", string(out))
+	}
+
+	_, _, model, _, ttft, _ := metrics.snapshot()
+	if model != "text-davinci-003" {
+		t.Errorf("model = %q, want text-davinci-003", model)
+	}
+	if ttft <= 0 {
+		t.Errorf("expected ttft > 0 for completions stream, got %v", ttft)
 	}
 }
 

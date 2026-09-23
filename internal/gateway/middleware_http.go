@@ -141,7 +141,9 @@ func prepareChat(c *gin.Context) {
 				streamOpts = make(map[string]any)
 				payload["stream_options"] = streamOpts
 			}
-			streamOpts["include_usage"] = true
+			if _, exists := streamOpts["include_usage"]; !exists {
+				streamOpts["include_usage"] = true
+			}
 
 			if newBody, err := json.Marshal(payload); err == nil {
 				body = newBody

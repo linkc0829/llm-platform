@@ -282,13 +282,17 @@ func TestServiceLoadOnStartupDiscardsInvalidFormatEvenWhenModelMatches(t *testin
 	}
 }
 
-func TestServiceLoadOnStartupMissingVectorFileIsQuiet(t *testing.T) {
+func TestServiceLoadOnStartupMissingVectorFileReportsStale(t *testing.T) {
 	section := mustIncrementalSection(t, "guide.md", "Guide", "body")
 	vectors := &fakeVectorStore{}
 	svc := NewService(&fakeSectionStore{loadSections: []Section{section}}, nil, nil, vectors, nil, "model")
 
-	if err := svc.LoadOnStartup(context.Background()); err != nil {
-		t.Fatalf("LoadOnStartup() error = %v, want nil for missing vector file", err)
+	err := svc.LoadOnStartup(context.Background())
+	if !errors.Is(err, ErrVectorsIgnored) {
+		t.Fatalf("LoadOnStartup() error = %v, want ErrVectorsIgnored", err)
+	}
+	if got := svc.VectorsState(); got != "stale" {
+		t.Errorf("VectorsState() = %q, want stale", got)
 	}
 	_, _, loaded, ready := svc.indexSnapshot()
 	if !ready || len(loaded) != 0 {

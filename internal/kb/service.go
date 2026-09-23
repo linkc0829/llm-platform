@@ -124,7 +124,7 @@ func (s *Service) LoadOnStartup(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if invalid || identity != "" && identity != s.embeddingIdentity() {
+		if invalid || identity == "" || identity != s.embeddingIdentity() {
 			stale = true
 		} else {
 			vecMap = citationVectors(secs, loaded)

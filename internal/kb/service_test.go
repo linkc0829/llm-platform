@@ -805,4 +805,16 @@ func TestService_VectorsState_Lifecycle(t *testing.T) {
 			t.Errorf("VectorsState() after successful Index = %q, want ok", got)
 		}
 	})
+
+	t.Run("missing_vector_file_reports_stale", func(t *testing.T) {
+		secStore := &fakeSectionStore{loadSections: []Section{sec}}
+		svc := NewService(secStore, &fakeLLM{}, &fakeEmbedder{}, &fakeVectorStore{}, NewInProcStore(), "model")
+		err := svc.LoadOnStartup(ctx)
+		if !errors.Is(err, ErrVectorsIgnored) {
+			t.Fatalf("LoadOnStartup err = %v, want ErrVectorsIgnored", err)
+		}
+		if got := svc.VectorsState(); got != "stale" {
+			t.Errorf("VectorsState() = %q, want stale", got)
+		}
+	})
 }

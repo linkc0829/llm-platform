@@ -137,7 +137,7 @@ func (s *Store) Reload() error {
 	path := s.path
 	s.mu.RUnlock()
 
-	tempStore, err := loadFile(path, s.logger, false)
+	tempStore, err := loadFile(path, s.logger, true)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Warn("auth snapshot reload failed; retaining previous snapshot",

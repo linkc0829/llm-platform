@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -152,5 +153,39 @@ func TestReloadPreservesPreviousSnapshotOnBadFile(t *testing.T) {
 	}
 	if p.Name != "alice" {
 		t.Errorf("expected alice, got %s", p.Name)
+	}
+}
+
+func TestReloadAllowsEmptyPrincipalSet(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	tokAlice := "kb_alice_secret_token"
+	initial := []byte(fmt.Sprintf(
+		`{"principals":[{"id":"p_alice","name":"alice","token_sha256":%q}]}`,
+		HashToken(tokAlice),
+	))
+	if err := os.WriteFile(path, initial, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	store, err := LoadFile(path, zap.NewNop())
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+
+	if _, err := store.Resolve(context.Background(), tokAlice); err != nil {
+		t.Fatalf("Resolve alice: %v", err)
+	}
+
+	// Write empty principals and reload
+	if err := os.WriteFile(path, []byte(`{"principals":[]}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := store.Reload(); err != nil {
+		t.Fatalf("Reload() error = %v, want nil", err)
+	}
+
+	if _, err := store.Resolve(context.Background(), tokAlice); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("Resolve alice error = %v, want ErrInvalidToken", err)
 	}
 }
