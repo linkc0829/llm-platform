@@ -21,8 +21,9 @@ type Server struct {
 }
 
 type Config struct {
-	Port        int
-	BindAddress string
+	Port         int
+	BindAddress  string
+	WriteTimeout *time.Duration
 }
 
 // New constructs a gin Engine with default middleware (recovery, request id,
@@ -44,13 +45,17 @@ func Wrap(engine *gin.Engine, cfg Config, logger *zap.Logger) *Server {
 	if cfg.BindAddress != "" {
 		addr = net.JoinHostPort(cfg.BindAddress, strconv.Itoa(cfg.Port))
 	}
+	writeTimeout := 30 * time.Second
+	if cfg.WriteTimeout != nil {
+		writeTimeout = *cfg.WriteTimeout
+	}
 	return &Server{
 		srv: &http.Server{
 			Addr:              addr,
 			Handler:           engine,
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      30 * time.Second,
+			WriteTimeout:      writeTimeout,
 			IdleTimeout:       120 * time.Second,
 		},
 		logger: logger,

@@ -21,6 +21,7 @@ import (
 type ChatOptions struct {
 	Temperature float64
 	MaxTokens   int64
+	ForwardUser bool
 }
 
 // OpenAIClient implements LLM and Embedder.
@@ -32,6 +33,7 @@ type OpenAIClient struct {
 	embedBaseURL        string
 	geminiThinkingLevel string
 	chat                ChatOptions
+	forwardEmbedUser    bool
 }
 
 func NewOpenAIClient(apiKey, baseURL, embedBaseURL, embedAPIKey, geminiThinkingLevel, chatModel, embedModel string, chat ChatOptions) *OpenAIClient {
@@ -42,6 +44,8 @@ func NewOpenAIClient(apiKey, baseURL, embedBaseURL, embedAPIKey, geminiThinkingL
 	if embedAPIKey == "" {
 		embedAPIKey = apiKey
 	}
+	forwardEmbedUser := chat.ForwardUser && baseURL != "" &&
+		strings.TrimRight(embedBaseURL, "/") == strings.TrimRight(baseURL, "/")
 	return &OpenAIClient{
 		client:              openai.NewClient(opts...),
 		embedClient:         openai.NewClient(openAIOptions(embedAPIKey, embedBaseURL)...),
@@ -50,6 +54,7 @@ func NewOpenAIClient(apiKey, baseURL, embedBaseURL, embedAPIKey, geminiThinkingL
 		embedBaseURL:        embedBaseURL,
 		geminiThinkingLevel: geminiThinkingLevel,
 		chat:                chat,
+		forwardEmbedUser:    forwardEmbedUser,
 	}
 }
 
@@ -207,7 +212,13 @@ func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Sect
 			"google": map[string]any{"thinking_config": map[string]string{"thinking_level": o.geminiThinkingLevel}},
 		}})
 	}
-	completion, err := o.client.Chat.Completions.New(ctx, params)
+	var requestOptions []option.RequestOption
+	if o.chat.ForwardUser {
+		if principalID := principalIDFromContext(ctx); principalID != "" {
+			requestOptions = append(requestOptions, option.WithHeader("X-On-Behalf-Of", principalID))
+		}
+	}
+	completion, err := o.client.Chat.Completions.New(ctx, params, requestOptions...)
 	if err != nil {
 		return "", classifyLLMError(fmt.Errorf("openai chat: %w", err))
 	}
@@ -239,13 +250,19 @@ func (o *OpenAIClient) Embed(ctx context.Context, texts []string) ([][]float32, 
 }
 
 func (o *OpenAIClient) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	var requestOptions []option.RequestOption
+	if o.forwardEmbedUser {
+		if principalID := principalIDFromContext(ctx); principalID != "" {
+			requestOptions = append(requestOptions, option.WithHeader("X-On-Behalf-Of", principalID))
+		}
+	}
 	response, err := o.embedClient.Embeddings.New(ctx, openai.EmbeddingNewParams{
 		Input: openai.EmbeddingNewParamsInputUnion{
 			OfArrayOfStrings: texts,
 		},
 		Model:          o.embedModel,
 		EncodingFormat: openai.EmbeddingNewParamsEncodingFormatFloat,
-	})
+	}, requestOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("openai embed: %w", err)
 	}

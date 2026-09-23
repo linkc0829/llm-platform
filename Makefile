@@ -19,10 +19,11 @@ help: ## Show this help
 # ============================================================================
 # Build & Run
 # ============================================================================
-build: ## Build kb, kbmcp and kbtoken into bin/
+build: ## Build kb, kbmcp, kbtoken, and gateway into bin/
 	go build -o $(BUILD_DIR)/$(BINARY_NAME)$(EXE) ./cmd/kb
 	go build -o $(BUILD_DIR)/kbmcp$(EXE) ./cmd/kbmcp
 	go build -o $(BUILD_DIR)/kbtoken$(EXE) ./cmd/kbtoken
+	go build -o $(BUILD_DIR)/gateway$(EXE) ./cmd/gateway
 
 prompt-check: ## Compare the built binaries' grounding prompt against the running service
 	@echo "source : $$(go run ./cmd/kb -fingerprint)"
@@ -32,6 +33,9 @@ prompt-check: ## Compare the built binaries' grounding prompt against the runnin
 
 run: ## Run kb locally (needs $$env:KB_AUTH_FILE, or KB_AUTH_DISABLED=true)
 	go run ./cmd/kb
+
+run-gateway: ## Run gateway locally (needs GATEWAY_UPSTREAM_BASE_URL, KB_AUTH_FILE)
+	go run ./cmd/gateway
 
 mcp: ## Run the stdio MCP server (dev / Inspector; prefer make run)
 	go run ./cmd/kbmcp

@@ -71,24 +71,38 @@ linters-settings:
             desc: "Handler must call service, not adapters directly"
 
       # ------------------------------------------------------------------
-      # Feature boundaries: auth and kb communicate through shared values
-      # and ports, never by importing each other's implementation package.
+      # Feature boundaries: auth, kb, and gateway communicate through shared
+      # values and ports, never by importing each other's implementation package.
       # ------------------------------------------------------------------
       no-cross-feature-auth:
         files:
           - "**/internal/kb/*.go"
+          - "**/internal/gateway/*.go"
           - "!**/internal/kb/*_test.go"
+          - "!**/internal/gateway/*_test.go"
         deny:
           - pkg: "github.com/linkc0829/llm-platform/internal/auth"
-            desc: "kb must consume shared principal values, not auth feature implementation"
+            desc: "features must consume shared principal values and ports, not auth feature implementation"
 
       no-cross-feature-kb:
         files:
           - "**/internal/auth/*.go"
+          - "**/internal/gateway/*.go"
           - "!**/internal/auth/*_test.go"
+          - "!**/internal/gateway/*_test.go"
         deny:
           - pkg: "github.com/linkc0829/llm-platform/internal/kb"
-            desc: "auth must not depend on kb feature implementation"
+            desc: "features must not depend on kb feature implementation"
+
+      no-cross-feature-gateway:
+        files:
+          - "**/internal/auth/*.go"
+          - "**/internal/kb/*.go"
+          - "!**/internal/auth/*_test.go"
+          - "!**/internal/kb/*_test.go"
+        deny:
+          - pkg: "github.com/linkc0829/llm-platform/internal/gateway"
+            desc: "features must not depend on gateway feature implementation"
 
 
 issues:

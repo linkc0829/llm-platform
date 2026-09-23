@@ -1,7 +1,8 @@
 package kb
 
 type HealthResponse struct {
-	Status string `json:"status"`
+	Status  string `json:"status"`
+	Vectors string `json:"vectors"`
 	// Chat names the decoding settings the service answers with. An eval run
 	// records it so a later comparison can tell a corpus regression apart from
 	// a model or parameter change. Absent when no real model is wired.

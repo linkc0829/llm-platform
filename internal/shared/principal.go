@@ -11,4 +11,6 @@ type Principal struct {
 	Engineering bool     `json:"engineering,omitempty"`
 	Indexer     bool     `json:"indexer,omitempty"`
 	Admin       bool     `json:"admin,omitempty"`
+	Workload    string   `json:"workload,omitempty"`
+	Trusted     bool     `json:"trusted,omitempty"`
 }

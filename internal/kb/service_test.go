@@ -10,6 +10,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+
+	"github.com/linkc0829/llm-platform/internal/shared"
 )
 
 type fakeSectionStore struct {
@@ -61,10 +63,12 @@ type fakeEmbedder struct {
 	calls    int
 	texts    []string
 	identity string
+	lastCtx  context.Context
 }
 
-func (f *fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+func (f *fakeEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	f.calls++
+	f.lastCtx = ctx
 	f.texts = append([]string(nil), texts...)
 	if f.err != nil {
 		return nil, f.err
@@ -689,4 +693,128 @@ func TestComposeQuery(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestService_ChatWithMetrics_PrincipalInEmbedContext(t *testing.T) {
+	ctx := context.Background()
+	sec, err := NewSection("doc.md", "Heading", "Body content", map[string]string{"doc_type": "procedure"}, nil)
+	if err != nil {
+		t.Fatalf("NewSection: %v", err)
+	}
+
+	embedder := &fakeEmbedder{
+		vectors:  map[string][]float32{"query": {1, 0, 0, 0}},
+		identity: "model@http://gateway/v1",
+	}
+	vecStore := &fakeVectorStore{
+		loadModel: "model@http://gateway/v1",
+		loadVectors: map[string][]float32{
+			sectionBodyHash("Body content"): {1, 0, 0, 0},
+		},
+	}
+	secStore := &fakeSectionStore{loadSections: []Section{sec}}
+	llm := &fakeLLM{answer: "answer [doc.md#heading]"}
+	sessions := NewInProcStore()
+
+	svc := NewService(secStore, llm, embedder, vecStore, sessions, "model")
+	if err := svc.LoadOnStartup(ctx); err != nil {
+		t.Fatalf("LoadOnStartup: %v", err)
+	}
+
+	_, _, _, err = svc.ChatWithMetrics(ctx, shared.Principal{ID: "user-42"}, "query", "session-1")
+	if err != nil {
+		t.Fatalf("ChatWithMetrics: %v", err)
+	}
+
+	if embedder.lastCtx == nil {
+		t.Fatal("expected Embed to be called with context")
+	}
+	if got := principalIDFromContext(embedder.lastCtx); got != "user-42" {
+		t.Errorf("principalID in Embed ctx = %q, want user-42", got)
+	}
+}
+
+// 目的：這是品質悄悄下降時唯一看得到的訊號。identity 改變會退回純 BM25，必須在 /health 與 VectorsState 正確暴露狀態。
+func TestService_VectorsState_Lifecycle(t *testing.T) {
+	ctx := context.Background()
+	sec, err := NewSection("doc.md", "Heading", "Body text", map[string]string{"doc_type": "procedure"}, nil)
+	if err != nil {
+		t.Fatalf("NewSection: %v", err)
+	}
+
+	t.Run("fresh_service_not_indexed", func(t *testing.T) {
+		svc := NewService(&fakeSectionStore{}, &fakeLLM{}, &fakeEmbedder{}, &fakeVectorStore{}, NewInProcStore(), "model")
+		if got := svc.VectorsState(); got != "not_indexed" {
+			t.Errorf("VectorsState() = %q, want not_indexed", got)
+		}
+	})
+
+	t.Run("disabled_when_vectors_nil", func(t *testing.T) {
+		secStore := &fakeSectionStore{loadSections: []Section{sec}}
+		svc := NewService(secStore, &fakeLLM{}, nil, nil, NewInProcStore(), "model")
+		if err := svc.LoadOnStartup(ctx); err != nil {
+			t.Fatalf("LoadOnStartup: %v", err)
+		}
+		if got := svc.VectorsState(); got != "disabled" {
+			t.Errorf("VectorsState() = %q, want disabled", got)
+		}
+	})
+
+	t.Run("identity_mismatch_becomes_stale_until_index_succeeds", func(t *testing.T) {
+		embedder := &fakeEmbedder{
+			vectors:  map[string][]float32{"Body text": {1, 0, 0, 0}},
+			identity: "new-model@http://gateway/v1",
+		}
+		vecStore := &fakeVectorStore{
+			loadModel:   "old-model@https://old-google-url",
+			loadVectors: map[string][]float32{"hash": {1, 0, 0, 0}},
+		}
+		secStore := &fakeSectionStore{
+			loadSections:  []Section{sec},
+			parseSections: []Section{sec},
+			parseFiles:    1,
+		}
+		svc := NewService(secStore, &fakeLLM{}, embedder, vecStore, NewInProcStore(), "new-model")
+
+		// 1. Startup with mismatched identity -> stale
+		err := svc.LoadOnStartup(ctx)
+		if !errors.Is(err, ErrVectorsIgnored) {
+			t.Fatalf("LoadOnStartup err = %v, want ErrVectorsIgnored", err)
+		}
+		if got := svc.VectorsState(); got != "stale" {
+			t.Errorf("VectorsState() = %q, want stale", got)
+		}
+
+		// 2. Failed Index retains stale state
+		embedder.err = errors.New("embed failed")
+		_, _, err = svc.Index(ctx)
+		if err == nil {
+			t.Fatal("expected Index to fail")
+		}
+		if got := svc.VectorsState(); got != "stale" {
+			t.Errorf("VectorsState() after failed Index = %q, want stale", got)
+		}
+
+		// 3. Successful Index clears stale state to ok
+		embedder.err = nil
+		_, _, err = svc.Index(ctx)
+		if err != nil {
+			t.Fatalf("Index() err = %v, want nil", err)
+		}
+		if got := svc.VectorsState(); got != "ok" {
+			t.Errorf("VectorsState() after successful Index = %q, want ok", got)
+		}
+	})
+
+	t.Run("missing_vector_file_reports_stale", func(t *testing.T) {
+		secStore := &fakeSectionStore{loadSections: []Section{sec}}
+		svc := NewService(secStore, &fakeLLM{}, &fakeEmbedder{}, &fakeVectorStore{}, NewInProcStore(), "model")
+		err := svc.LoadOnStartup(ctx)
+		if !errors.Is(err, ErrVectorsIgnored) {
+			t.Fatalf("LoadOnStartup err = %v, want ErrVectorsIgnored", err)
+		}
+		if got := svc.VectorsState(); got != "stale" {
+			t.Errorf("VectorsState() = %q, want stale", got)
+		}
+	})
 }

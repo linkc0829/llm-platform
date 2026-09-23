@@ -26,7 +26,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 # ===== 設定 =====
-KB_URL = "http://localhost:12598/chat"     # 對齊 .env 的 APP_PORT
+KB_URL = os.getenv("KB_URL", "http://localhost:12598/chat")     # 對齊 .env 的 APP_PORT
 # 含 <area>/*-eval.yaml 的目錄(make import 產出)。KB_EVAL_DIR 可覆蓋,
 # 這樣重跑驗收不必去改這份受版控的樣板。
 EVAL_DIR = os.getenv("KB_EVAL_DIR", r"<<EVAL_DIR>>")
@@ -153,6 +153,57 @@ def is_skippable_error(error):
     return isinstance(error, (urllib.error.URLError, TimeoutError, ConnectionError))
 
 
+def health_url_from_kb_url(url):
+    clean = url.rstrip("/")
+    if clean.endswith("/chat"):
+        return clean[:-5] + "/health"
+    return clean + "/health"
+
+
+def require_vectors_ok(kb_url):
+    health_url = health_url_from_kb_url(kb_url)
+    req = urllib.request.Request(health_url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as response:
+            status = response.status
+            if not (200 <= status < 300):
+                print(f"✗ KB health check failed: HTTP {status} (url: {health_url})", file=sys.stderr)
+                raise SystemExit(1)
+            raw = response.read()
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                print(f"✗ KB health check failed: non-JSON response from {health_url}: {e}", file=sys.stderr)
+                raise SystemExit(1)
+    except urllib.error.HTTPError as error:
+        print(f"✗ KB health check failed: HTTP {error.code} (url: {health_url})", file=sys.stderr)
+        raise SystemExit(1)
+    except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as error:
+        print(f"✗ KB health check failed: {error} (url: {health_url})", file=sys.stderr)
+        raise SystemExit(1)
+
+    if not isinstance(payload, dict):
+        print(f"✗ KB health check failed: expected JSON object, got {type(payload).__name__}", file=sys.stderr)
+        raise SystemExit(1)
+
+    vectors = payload.get("vectors")
+    if vectors != "ok":
+        if vectors is None:
+            advice = "回應缺少 vectors 欄位 —— 請確認 KB 服務已更新至支援向量健康狀態的版本"
+        elif vectors == "stale":
+            advice = "向量索引已過期 (stale) —— 請重新執行 POST /index 重建索引"
+        elif vectors == "not_indexed":
+            advice = "服務尚未建索引 (not_indexed) —— 請先執行 POST /index"
+        elif vectors == "disabled":
+            advice = "向量檢索已停用 (disabled) —— 請確認 embedding 設定"
+        else:
+            advice = f"未知或未就緒狀態 ({vectors})"
+        print(f"✗ KB 向量未就緒: {advice} (vectors={vectors})", file=sys.stderr)
+        print("  eval 評估需要向量檢索正常運作，否則分數無意義。終止執行。", file=sys.stderr)
+        raise SystemExit(1)
+    print(f"KB 向量狀態: ok ({health_url})")
+
+
 def _selftest():
     class FakeError:
         def __init__(self, value):
@@ -169,6 +220,12 @@ def _selftest():
     assert retry_after_seconds(FakeError(past)) == 0.0
     assert _retry_delay(1, 37.0) >= 37.0
     assert _retry_delay(3, None) < 10
+
+    assert health_url_from_kb_url("http://localhost:12598/chat") == "http://localhost:12598/health"
+    assert health_url_from_kb_url("http://localhost:12598/chat/") == "http://localhost:12598/health"
+    assert health_url_from_kb_url("http://localhost:12598") == "http://localhost:12598/health"
+    assert health_url_from_kb_url("http://127.0.0.1:8080/api/chat") == "http://127.0.0.1:8080/api/health"
+
     print("run_eval selftest: PASS")
 
 
@@ -390,6 +447,8 @@ def load_checkpoint(questions):
 
 if not os.getenv("KB_EVAL_SKIP_BUILD_CHECK"):
     check_binary_freshness(os.getcwd())
+
+require_vectors_ok(KB_URL)
 
 questions = []
 for f in sorted(glob.glob(os.path.join(EVAL_DIR, "*", "*eval.yaml"))):

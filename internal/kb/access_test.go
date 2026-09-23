@@ -270,8 +270,8 @@ func TestServiceIndexAuditLeavesMarkdownSnapshotUntouched(t *testing.T) {
 		t.Fatalf("MarkdownRepo.Save() error = %v, want nil", err)
 	}
 	svc := NewService(repo, nil, &fakeEmbedder{}, &fakeVectorStore{}, nil, "test-model")
-	if err := svc.LoadOnStartup(context.Background()); err != nil {
-		t.Fatalf("Service.LoadOnStartup() error = %v, want nil", err)
+	if err := svc.LoadOnStartup(context.Background()); !errors.Is(err, ErrVectorsIgnored) {
+		t.Fatalf("Service.LoadOnStartup() error = %v, want ErrVectorsIgnored", err)
 	}
 	indexPath := filepath.Join(indexDir, "index.json")
 	before, err := os.ReadFile(indexPath)

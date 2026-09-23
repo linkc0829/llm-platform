@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -58,12 +59,13 @@ type sectionStore interface {
 }
 
 type Service struct {
-	sections   sectionStore
-	llm        LLM
-	embedder   Embedder
-	vectors    VectorStore
-	sessions   SessionStore
-	embedModel string
+	sections     sectionStore
+	llm          LLM
+	embedder     Embedder
+	vectors      VectorStore
+	sessions     SessionStore
+	embedModel   string
+	vectorsStale atomic.Bool
 
 	mu      sync.RWMutex
 	vecMap  map[string][]float32
@@ -99,6 +101,7 @@ func (s *Service) Index(ctx context.Context) (int, int, error) {
 	}
 
 	s.storeIndexSnapshot(secs, BuildCorpus(secs), vecMap, true)
+	s.vectorsStale.Store(false)
 	return files, len(secs), nil
 }
 
@@ -121,7 +124,7 @@ func (s *Service) LoadOnStartup(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if invalid || identity != "" && identity != s.embeddingIdentity() {
+		if invalid || identity == "" || identity != s.embeddingIdentity() {
 			stale = true
 		} else {
 			vecMap = citationVectors(secs, loaded)
@@ -130,9 +133,27 @@ func (s *Service) LoadOnStartup(ctx context.Context) error {
 
 	s.storeIndexSnapshot(secs, BuildCorpus(secs), vecMap, true)
 	if stale {
+		s.vectorsStale.Store(true)
 		return ErrVectorsIgnored
 	}
+	s.vectorsStale.Store(false)
 	return nil
+}
+
+func (s *Service) VectorsState() string {
+	s.mu.RLock()
+	ready := s.ready
+	s.mu.RUnlock()
+	if !ready {
+		return "not_indexed"
+	}
+	if s.vectors == nil {
+		return "disabled"
+	}
+	if s.vectorsStale.Load() {
+		return "stale"
+	}
+	return "ok"
 }
 
 func (s *Service) ChatWithMetrics(ctx context.Context, principal shared.Principal, query, sessionID string) (Answer, string, RetrievalMetrics, error) {
@@ -145,6 +166,7 @@ func (s *Service) chat(ctx context.Context, principal shared.Principal, query, s
 	if ownerID == "" {
 		return Answer{}, sessionID, RetrievalMetrics{}, ErrSessionOwnerRequired
 	}
+	ctx = withPrincipalID(ctx, ownerID)
 	if strings.TrimSpace(query) == "" {
 		return Answer{}, sessionID, RetrievalMetrics{}, ErrEmptyQuery
 	}
@@ -230,8 +252,26 @@ func (s *Service) deny(ctx context.Context, ownerID, sessionID, query string, st
 	return answer, sessionID, nil
 }
 
+type contextKey string
+
+const principalIDContextKey contextKey = "kb.principal_id"
+
+func withPrincipalID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, principalIDContextKey, id)
+}
+
+func principalIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(principalIDContextKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
 // answerFrom grounds the LLM on the given sections, records the turn, and returns the answer.
 func (s *Service) answerFrom(ctx context.Context, ownerID, sessionID, query string, sections []Section, history []Turn, strategy string, start time.Time) (Answer, string, error) {
+	if ownerID != "" {
+		ctx = withPrincipalID(ctx, ownerID)
+	}
 	text, err := s.llm.Answer(ctx, query, sections, history)
 	if err != nil {
 		return Answer{}, sessionID, fmt.Errorf("llm answer: %w", err)

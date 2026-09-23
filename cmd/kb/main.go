@@ -80,7 +80,7 @@ func main() {
 			lg.Sugar().Fatalf("load index: %v", err)
 		}
 	}
-	h := kb.NewHandler(svc, lg, httpPrincipalProvider(cfg), bootstrap.ChatRuntime(cfg))
+	h := kb.NewHandler(svc, lg, httpPrincipalProvider(cfg), bootstrap.ChatRuntime(cfg), cfg.KB.IndexTimeout)
 
 	routeGuards := kb.RouteGuards{AllowUnauthenticated: cfg.Auth.Disabled}
 	if !cfg.Auth.Disabled {
@@ -100,7 +100,7 @@ func main() {
 	}
 	mcpserver.RegisterStreamableHTTPRoutes(engine, svc, lg, cfg.Auth.Disabled, services.Auth)
 
-	srv := httpserver.Wrap(engine, httpserver.Config{Port: cfg.HTTP.Port, BindAddress: httpBindAddress(cfg)}, lg)
+	srv := httpserver.Wrap(engine, bootstrap.KBServerConfig(cfg, httpBindAddress(cfg)), lg)
 
 	errs := make(chan error, 1)
 	go func() {

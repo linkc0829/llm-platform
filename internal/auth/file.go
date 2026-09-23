@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -29,10 +30,11 @@ const (
 // snapshot is safe for concurrent Resolve calls and is intentionally not
 // exposed for mutation.
 type Store struct {
-	mu         sync.RWMutex
-	principals []Record
-	path       string
-	logger     *zap.Logger
+	mu          sync.RWMutex
+	principals  []Record
+	path        string
+	logger      *zap.Logger
+	lastModTime time.Time
 }
 
 // LoadFile reads and validates an auth snapshot. A missing path, malformed
@@ -118,10 +120,62 @@ func loadFile(path string, logger *zap.Logger, allowEmpty bool) (*Store, error) 
 		if !validTokenHash(record.TokenSHA256) {
 			return nil, fmt.Errorf("auth principal %d: token_sha256 must be a SHA-256 hex digest", i)
 		}
+		if err := ValidateWorkload(record.Workload); err != nil {
+			return nil, fmt.Errorf("auth principal %d: workload: %w", i, err)
+		}
 		principals[i] = cloneRecord(record)
 	}
 
-	return &Store{principals: principals, path: path, logger: logger}, nil
+	return &Store{principals: principals, path: path, logger: logger, lastModTime: info.ModTime()}, nil
+}
+
+// Reload re-reads and validates the auth snapshot from disk, replacing the
+// in-memory snapshot if valid. If validation fails, the existing snapshot
+// is retained and an error is returned.
+func (s *Store) Reload() error {
+	s.mu.RLock()
+	path := s.path
+	s.mu.RUnlock()
+
+	tempStore, err := loadFile(path, s.logger, true)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("auth snapshot reload failed; retaining previous snapshot",
+				zap.Error(err),
+				zap.String("path", path),
+			)
+		}
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.principals = tempStore.principals
+	s.lastModTime = tempStore.lastModTime
+	return nil
+}
+
+// ReloadIfModified checks the file modification time and reloads if changed.
+// Returns (true, nil) if reloaded, (false, nil) if unchanged.
+func (s *Store) ReloadIfModified() (bool, error) {
+	s.mu.RLock()
+	path := s.path
+	lastMod := s.lastModTime
+	s.mu.RUnlock()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, fmt.Errorf("stat auth file: %w", err)
+	}
+
+	if info.ModTime().Equal(lastMod) {
+		return false, nil
+	}
+
+	if err := s.Reload(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // NewBootstrapStore creates an empty store for the explicit local bootstrap

@@ -226,3 +226,149 @@ func TestAnswerSendsDecodingParams(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAIClient_Answer_XOnBehalfOf(t *testing.T) {
+	tests := []struct {
+		name        string
+		forwardUser bool
+		ctxUserID   string
+		wantHeader  string
+	}{
+		{
+			name:        "forward_enabled_with_user_in_ctx",
+			forwardUser: true,
+			ctxUserID:   "p_alice",
+			wantHeader:  "p_alice",
+		},
+		{
+			name:        "forward_disabled_with_user_in_ctx",
+			forwardUser: false,
+			ctxUserID:   "p_alice",
+			wantHeader:  "",
+		},
+		{
+			name:        "forward_enabled_empty_user",
+			forwardUser: true,
+			ctxUserID:   "",
+			wantHeader:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var receivedHeader string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedHeader = r.Header.Get("X-On-Behalf-Of")
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "answer"}}}})
+			}))
+			t.Cleanup(server.Close)
+
+			client := NewOpenAIClient("key", server.URL+"/v1", "", "", "", "chat", "embed", ChatOptions{ForwardUser: tt.forwardUser})
+			ctx := context.Background()
+			if tt.ctxUserID != "" {
+				ctx = withPrincipalID(ctx, tt.ctxUserID)
+			}
+			if _, err := client.Answer(ctx, "question", nil, nil); err != nil {
+				t.Fatalf("Answer() error = %v", err)
+			}
+			if receivedHeader != tt.wantHeader {
+				t.Errorf("X-On-Behalf-Of = %q, want %q", receivedHeader, tt.wantHeader)
+			}
+		})
+	}
+}
+
+func TestOpenAIClient_Embed_XOnBehalfOf(t *testing.T) {
+	tests := []struct {
+		name        string
+		forwardUser bool
+		ctxUserID   string
+		wantHeader  string
+	}{
+		{
+			name:        "forward_enabled_with_user_in_ctx",
+			forwardUser: true,
+			ctxUserID:   "p_alice",
+			wantHeader:  "p_alice",
+		},
+		{
+			name:        "forward_disabled_with_user_in_ctx",
+			forwardUser: false,
+			ctxUserID:   "p_alice",
+			wantHeader:  "",
+		},
+		{
+			name:        "forward_enabled_empty_user",
+			forwardUser: true,
+			ctxUserID:   "",
+			wantHeader:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var receivedHeader string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedHeader = r.Header.Get("X-On-Behalf-Of")
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"data": []map[string]any{
+						{"index": 0, "embedding": []float64{0.1, 0.2}},
+					},
+				})
+			}))
+			t.Cleanup(server.Close)
+
+			client := NewOpenAIClient("key", server.URL+"/v1", "", "", "", "chat", "embed", ChatOptions{ForwardUser: tt.forwardUser})
+			ctx := context.Background()
+			if tt.ctxUserID != "" {
+				ctx = withPrincipalID(ctx, tt.ctxUserID)
+			}
+			if _, err := client.Embed(ctx, []string{"hello"}); err != nil {
+				t.Fatalf("Embed() error = %v", err)
+			}
+			if receivedHeader != tt.wantHeader {
+				t.Errorf("X-On-Behalf-Of = %q, want %q", receivedHeader, tt.wantHeader)
+			}
+		})
+	}
+}
+
+func TestOpenAIClient_Embed_XOnBehalfOf_DirectEndpointOmitted(t *testing.T) {
+	var chatHeader, embedHeader string
+	chatServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chatHeader = r.Header.Get("X-On-Behalf-Of")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "answer"}}}})
+	}))
+	t.Cleanup(chatServer.Close)
+
+	embedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		embedHeader = r.Header.Get("X-On-Behalf-Of")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"index": 0, "embedding": []float64{0.1, 0.2}},
+			},
+		})
+	}))
+	t.Cleanup(embedServer.Close)
+
+	client := NewOpenAIClient("key", chatServer.URL+"/v1", embedServer.URL+"/v1", "", "", "chat", "embed", ChatOptions{ForwardUser: true})
+	ctx := withPrincipalID(context.Background(), "p_alice")
+
+	if _, err := client.Answer(ctx, "question", nil, nil); err != nil {
+		t.Fatalf("Answer() error = %v", err)
+	}
+	if chatHeader != "p_alice" {
+		t.Errorf("chat X-On-Behalf-Of = %q, want p_alice", chatHeader)
+	}
+
+	if _, err := client.Embed(ctx, []string{"hello"}); err != nil {
+		t.Fatalf("Embed() error = %v", err)
+	}
+	if embedHeader != "" {
+		t.Errorf("embed X-On-Behalf-Of = %q, want empty (omitted for direct endpoint)", embedHeader)
+	}
+}

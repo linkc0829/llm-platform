@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -28,20 +29,30 @@ func (s *Store) ListTokens(ctx context.Context) ([]Record, error) {
 // CreateToken creates a non-admin principal and persists the complete new
 // snapshot before publishing it to Resolve.
 func (s *Store) CreateToken(ctx context.Context, actorID string, spec TokenSpec) (Record, string, error) {
-	return s.create(ctx, actorID, spec, false)
+	return s.create(ctx, actorID, spec, false, false)
 }
 
 // CreateAdminToken is reserved for the local kbtoken CLI. Network handlers
 // cannot call this method through TokenManager.
 func (s *Store) CreateAdminToken(ctx context.Context, actorID, name string) (Record, string, error) {
-	return s.create(ctx, actorID, TokenSpec{Name: name}, true)
+	return s.create(ctx, actorID, TokenSpec{Name: name}, true, false)
 }
 
-func (s *Store) create(ctx context.Context, actorID string, spec TokenSpec, admin bool) (Record, string, error) {
+// CreateServiceToken is reserved for the local kbtoken CLI. Network handlers
+// cannot call this method through TokenManager. It allows specifying workload
+// and granting trusted status for service impersonation.
+func (s *Store) CreateServiceToken(ctx context.Context, actorID string, spec TokenSpec, trusted bool) (Record, string, error) {
+	return s.create(ctx, actorID, spec, false, trusted)
+}
+
+func (s *Store) create(ctx context.Context, actorID string, spec TokenSpec, admin bool, trusted bool) (Record, string, error) {
 	if err := ctx.Err(); err != nil {
 		return Record{}, "", err
 	}
 	if err := ValidateName(spec.Name); err != nil {
+		return Record{}, "", err
+	}
+	if err := ValidateWorkload(spec.Workload); err != nil {
 		return Record{}, "", err
 	}
 
@@ -80,6 +91,8 @@ func (s *Store) create(ctx context.Context, actorID string, spec TokenSpec, admi
 			Engineering: spec.Engineering,
 			Indexer:     spec.Indexer,
 			Admin:       admin,
+			Workload:    spec.Workload,
+			Trusted:     trusted,
 		},
 		CreatedAt:   time.Now().UTC(),
 		TokenSHA256: HashToken(token),
@@ -190,6 +203,11 @@ func (s *Store) persistLocked(next []Record) error {
 	// temporary file, but parent-directory crash durability is platform- and
 	// filesystem-dependent.
 	s.principals = cloneRecords(next)
+	if info, err := os.Stat(s.path); err == nil {
+		s.lastModTime = info.ModTime()
+	} else {
+		s.lastModTime = time.Now()
+	}
 	if err := fileLock.Release(); err != nil {
 		if s.logger != nil {
 			s.logger.Error("auth file lock release failed after commit",

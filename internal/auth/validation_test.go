@@ -30,3 +30,30 @@ func TestValidateName(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateWorkload(t *testing.T) {
+	tests := []struct {
+		name     string
+		workload string
+		valid    bool
+	}{
+		{name: "empty (default)", workload: "", valid: true},
+		{name: "rag", workload: "rag", valid: true},
+		{name: "fim", workload: "fim", valid: true},
+		{name: "agent", workload: "agent", valid: true},
+		{name: "chat", workload: "chat", valid: true},
+		{name: "uppercase", workload: "RAG", valid: false},
+		{name: "invalid word", workload: "custom", valid: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateWorkload(tc.workload)
+			if got := err == nil; got != tc.valid {
+				t.Errorf("ValidateWorkload(%q) valid = %t, want %t (err=%v)", tc.workload, got, tc.valid, err)
+			}
+			if !tc.valid && !errors.Is(err, ErrInvalidWorkload) {
+				t.Errorf("ValidateWorkload(%q) error = %v, want ErrInvalidWorkload", tc.workload, err)
+			}
+		})
+	}
+}

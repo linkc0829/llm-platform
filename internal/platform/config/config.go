@@ -14,8 +14,9 @@ type Config struct {
 	HTTP   HTTPConfig
 	Logger LoggerConfig
 	OpenAI OpenAIConfig
-	KB     KBConfig
-	Auth   AuthConfig
+	KB      KBConfig
+	Auth    AuthConfig
+	Gateway GatewayConfig
 }
 
 type AppConfig struct {
@@ -57,11 +58,28 @@ type OpenAIConfig struct {
 	// 0 leaves max_tokens off the request. Answers cite their sources in the
 	// closing lines, so a truncating limit costs the citation, not just prose.
 	ChatMaxTokens int64 `mapstructure:"chat_max_tokens"`
+	// ForwardUser attaches X-On-Behalf-Of: <user_id> on outbound chat requests.
+	// Only enable when targeting the internal Gateway, never public cloud providers.
+	ForwardUser bool `mapstructure:"forward_user"`
 }
 
 type KBConfig struct {
-	DocsDir  string `mapstructure:"docs_dir"`
-	IndexDir string `mapstructure:"index_dir"`
+	DocsDir      string        `mapstructure:"docs_dir"`
+	IndexDir     string        `mapstructure:"index_dir"`
+	IndexTimeout time.Duration `mapstructure:"index_timeout"`
+}
+
+type GatewayConfig struct {
+	UpstreamBaseURL       string        `mapstructure:"upstream_base_url"`
+	UpstreamAPIKey        string        `mapstructure:"upstream_api_key"`
+	UpstreamHeaderTimeout time.Duration `mapstructure:"upstream_header_timeout"`
+	EmbedUpstreamBaseURL  string        `mapstructure:"embed_upstream_base_url"`
+	EmbedUpstreamAPIKey   string        `mapstructure:"embed_upstream_api_key"`
+	EmbedModel            string        `mapstructure:"embed_model"`
+	MaxInflightGlobal     int           `mapstructure:"max_inflight_global"`
+	MaxInflightPerUser    int           `mapstructure:"max_inflight_per_user"`
+	Port                  int           `mapstructure:"port"`
+	LogOutput             string        `mapstructure:"log_output"`
 }
 
 func LoadKB() (*Config, error) {
@@ -71,6 +89,30 @@ func LoadKB() (*Config, error) {
 	}
 	if !strings.EqualFold(cfg.OpenAI.LLMMode, "fake") && cfg.OpenAI.BaseURL == "" && cfg.OpenAI.APIKey == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY is required")
+	}
+	return cfg, nil
+}
+
+// LoadGateway loads the configuration for the standalone gateway binary.
+// UpstreamBaseURL must not include /v1.
+func LoadGateway() (*Config, error) {
+	cfg, err := LoadAuth()
+	if err != nil {
+		return nil, err
+	}
+	cfg.Gateway.UpstreamBaseURL = strings.TrimSpace(cfg.Gateway.UpstreamBaseURL)
+	if cfg.Gateway.UpstreamBaseURL == "" {
+		return nil, fmt.Errorf("GATEWAY_UPSTREAM_BASE_URL is required (must not include /v1)")
+	}
+	cfg.Gateway.UpstreamBaseURL = strings.TrimRight(cfg.Gateway.UpstreamBaseURL, "/")
+	cfg.Gateway.UpstreamBaseURL = strings.TrimSuffix(cfg.Gateway.UpstreamBaseURL, "/v1")
+
+	cfg.Gateway.EmbedUpstreamBaseURL = strings.TrimSpace(cfg.Gateway.EmbedUpstreamBaseURL)
+	cfg.Gateway.EmbedUpstreamBaseURL = strings.TrimRight(cfg.Gateway.EmbedUpstreamBaseURL, "/")
+	cfg.Gateway.EmbedModel = strings.TrimSpace(cfg.Gateway.EmbedModel)
+
+	if cfg.Gateway.EmbedUpstreamBaseURL != "" && cfg.Gateway.EmbedModel == "" {
+		return nil, fmt.Errorf("GATEWAY_EMBED_UPSTREAM_BASE_URL requires GATEWAY_EMBED_MODEL")
 	}
 	return cfg, nil
 }
@@ -106,35 +148,54 @@ func newViper() *viper.Viper {
 	v.SetDefault("openai.embed_model", "text-embedding-3-small")
 	v.SetDefault("openai.chat_temperature", 0)
 	v.SetDefault("openai.chat_max_tokens", 1024)
+	v.SetDefault("openai.forward_user", false)
 	v.SetDefault("kb.docs_dir", "docs")
 	v.SetDefault("kb.index_dir", ".kb")
+	v.SetDefault("kb.index_timeout", "60s")
+	v.SetDefault("gateway.max_inflight_global", 64)
+	v.SetDefault("gateway.max_inflight_per_user", 4)
+	v.SetDefault("gateway.port", 12599)
+	v.SetDefault("gateway.log_output", "stdout,log/gateway.log")
+	v.SetDefault("gateway.upstream_header_timeout", "300s")
 
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
 	binds := map[string]string{
-		"app.env":                      "APP_ENV",
-		"app.name":                     "APP_NAME",
-		"app.shutdown_timeout":         "APP_SHUTDOWN_TIMEOUT",
-		"http.port":                    "APP_PORT",
-		"http.bind_address":            "APP_BIND_ADDRESS",
-		"logger.level":                 "LOG_LEVEL",
-		"logger.encoding":              "LOG_ENCODING",
-		"logger.output":                "LOG_OUTPUT",
-		"openai.api_key":               "OPENAI_API_KEY",
-		"openai.llm_mode":              "KB_LLM_MODE",
-		"openai.base_url":              "OPENAI_BASE_URL",
-		"openai.embed_base_url":        "KB_EMBED_BASE_URL",
-		"openai.embed_api_key":         "KB_EMBED_API_KEY",
-		"openai.gemini_thinking_level": "KB_GEMINI_THINKING_LEVEL",
-		"openai.chat_model":            "KB_CHAT_MODEL",
-		"openai.chat_temperature":      "KB_CHAT_TEMPERATURE",
-		"openai.chat_max_tokens":       "KB_CHAT_MAX_TOKENS",
-		"openai.embed_model":           "KB_EMBED_MODEL",
-		"kb.docs_dir":                  "KB_DOCS_DIR",
-		"kb.index_dir":                 "KB_INDEX_DIR",
-		"auth.file":                    "KB_AUTH_FILE",
-		"auth.disabled":                "KB_AUTH_DISABLED",
+		"app.env":                         "APP_ENV",
+		"app.name":                        "APP_NAME",
+		"app.shutdown_timeout":            "APP_SHUTDOWN_TIMEOUT",
+		"http.port":                       "APP_PORT",
+		"http.bind_address":               "APP_BIND_ADDRESS",
+		"logger.level":                    "LOG_LEVEL",
+		"logger.encoding":                 "LOG_ENCODING",
+		"logger.output":                   "LOG_OUTPUT",
+		"openai.api_key":                  "OPENAI_API_KEY",
+		"openai.llm_mode":                 "KB_LLM_MODE",
+		"openai.base_url":                 "OPENAI_BASE_URL",
+		"openai.embed_base_url":           "KB_EMBED_BASE_URL",
+		"openai.embed_api_key":            "KB_EMBED_API_KEY",
+		"openai.gemini_thinking_level":    "KB_GEMINI_THINKING_LEVEL",
+		"openai.chat_model":               "KB_CHAT_MODEL",
+		"openai.chat_temperature":         "KB_CHAT_TEMPERATURE",
+		"openai.chat_max_tokens":          "KB_CHAT_MAX_TOKENS",
+		"openai.embed_model":              "KB_EMBED_MODEL",
+		"openai.forward_user":             "KB_LLM_FORWARD_USER",
+		"kb.docs_dir":                     "KB_DOCS_DIR",
+		"kb.index_dir":                    "KB_INDEX_DIR",
+		"kb.index_timeout":                "KB_INDEX_TIMEOUT",
+		"auth.file":                       "KB_AUTH_FILE",
+		"auth.disabled":                   "KB_AUTH_DISABLED",
+		"gateway.upstream_base_url":       "GATEWAY_UPSTREAM_BASE_URL",
+		"gateway.upstream_api_key":        "GATEWAY_UPSTREAM_API_KEY",
+		"gateway.upstream_header_timeout": "GATEWAY_UPSTREAM_HEADER_TIMEOUT",
+		"gateway.embed_upstream_base_url": "GATEWAY_EMBED_UPSTREAM_BASE_URL",
+		"gateway.embed_upstream_api_key":  "GATEWAY_EMBED_UPSTREAM_API_KEY",
+		"gateway.embed_model":             "GATEWAY_EMBED_MODEL",
+		"gateway.max_inflight_global":     "GATEWAY_MAX_INFLIGHT",
+		"gateway.max_inflight_per_user":   "GATEWAY_MAX_INFLIGHT_PER_USER",
+		"gateway.port":                    "GATEWAY_PORT",
+		"gateway.log_output":              "GATEWAY_LOG_OUTPUT",
 	}
 	for k, env := range binds {
 		_ = v.BindEnv(k, env)

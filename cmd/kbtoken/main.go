@@ -32,7 +32,7 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("command is required: list, create-admin, rotate-admin, or revoke-admin")
+		return errors.New("command is required: list, create, create-admin, rotate-admin, or revoke-admin")
 	}
 
 	cfg, err := config.LoadAuth()
@@ -59,6 +59,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return errors.New("list does not accept positional arguments")
 		}
 		return list(cfg, lg, stdout)
+	case "create":
+		return create(cfg, lg, args[1:], stdout, stderr)
 	case "create-admin":
 		return createAdmin(cfg, lg, args[1:], stdout, stderr)
 	case "rotate-admin":
@@ -233,6 +235,57 @@ func rotatedName(oldName, newID string) string {
 	return oldName + suffix
 }
 
+func create(cfg *config.Config, lg *zap.Logger, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("create", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	name := fs.String("name", "", "principal name")
+	workload := fs.String("workload", "", "workload type (rag, fim, agent, chat)")
+	trusted := fs.Bool("trusted", false, "allow service to impersonate users via X-On-Behalf-Of")
+	teams := fs.String("teams", "", "comma-separated team names")
+	allTeams := fs.Bool("all-teams", false, "grant access to all teams")
+	engineering := fs.Bool("engineering", false, "grant engineering capability")
+	indexer := fs.Bool("indexer", false, "grant indexer capability")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("create does not accept positional arguments")
+	}
+	if err := auth.ValidateName(*name); err != nil {
+		return err
+	}
+	if err := auth.ValidateWorkload(*workload); err != nil {
+		return err
+	}
+
+	store, err := auth.LoadBootstrapFile(cfg.Auth.File, lg)
+	if err != nil {
+		return fmt.Errorf("auth: %w", err)
+	}
+	var parsedTeams []string
+	if *teams != "" {
+		for _, t := range strings.Split(*teams, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				parsedTeams = append(parsedTeams, t)
+			}
+		}
+	}
+	spec := auth.TokenSpec{
+		Name:        *name,
+		Teams:       parsedTeams,
+		AllTeams:    *allTeams,
+		Engineering: *engineering,
+		Indexer:     *indexer,
+		Workload:    *workload,
+	}
+	record, token, err := store.CreateServiceToken(context.Background(), cliActorID, spec, *trusted)
+	if err != nil {
+		return fmt.Errorf("create token: %w", err)
+	}
+	return json.NewEncoder(stdout).Encode(createAdminResponse{ID: record.ID, Name: record.Name, Token: token})
+}
+
 type tokenMetadata struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
@@ -241,6 +294,8 @@ type tokenMetadata struct {
 	Engineering bool      `json:"engineering"`
 	Indexer     bool      `json:"indexer"`
 	Admin       bool      `json:"admin"`
+	Workload    string    `json:"workload,omitempty"`
+	Trusted     bool      `json:"trusted,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -259,6 +314,8 @@ func toTokenMetadata(record auth.Record) tokenMetadata {
 		Engineering: record.Engineering,
 		Indexer:     record.Indexer,
 		Admin:       record.Admin,
+		Workload:    record.Workload,
+		Trusted:     record.Trusted,
 		CreatedAt:   record.CreatedAt,
 	}
 }
