@@ -187,7 +187,6 @@ Environment variables:
 - `OPENAI_API_KEY` - a trusted gateway token, created with `kbtoken create -name <name> -workload rag -trusted`. The gateway resolves it and forwards with its own upstream key, so no provider key belongs here.
 - `KB_LLM_MODE` - `openai` or `fake`, default `openai`.
 - `OPENAI_BASE_URL` - the gateway, `http://localhost:12599/v1`. Chat and embeddings both go through it. The KB does not connect to a cloud provider directly.
-- `KB_GEMINI_THINKING_LEVEL` - optional Gemini OpenAI-compatible thinking level; set `minimal` to disable Gemma 4 thinking.
 - `KB_CHAT_MODEL` / `KB_EMBED_MODEL` - chat and embedding model names (e.g. `gemma-4-26b-a4b` / `gemini-embedding-2`; defaults `gpt-4o-mini` / `text-embedding-3-small`). `KB_EMBED_MODEL` must equal `GATEWAY_EMBED_MODEL`.
 - `KB_CHAT_TEMPERATURE` (default `0`) / `KB_CHAT_MAX_TOKENS` (default `1024`, `0` omits the field) - decoding parameters sent with every chat completion. Without them the upstream falls back to the served model's own `generation_config`, so repeated eval rounds disagree with each other. `GET /health` reports both alongside the chat model and a fingerprint of the grounding prompt, so an eval run can prove which build answered it.
 - `KB_DOCS_DIR` / `KB_INDEX_DIR` - source and local index directories.

@@ -42,7 +42,7 @@ func TestOpenAIClientEmbedBatchesRequests(t *testing.T) {
 	for i := range texts {
 		texts[i] = fmt.Sprintf("text-%d", i)
 	}
-	client := NewOpenAIClient("test", server.URL+"/v1", "", "chat", "embed", ChatOptions{})
+	client := NewOpenAIClient("test", server.URL+"/v1", "chat", "embed", ChatOptions{})
 	vectors, err := client.Embed(context.Background(), texts)
 	if err != nil {
 		t.Fatalf("Embed() error = %v, want nil", err)
@@ -66,32 +66,6 @@ func TestOpenAIClientEmbedBatchesRequests(t *testing.T) {
 		if len(vector) != 2 || vector[0] != wantBatch || vector[1] != wantIndex {
 			t.Errorf("Embed() vector %d = %v, want [%v %v]", i, vector, wantBatch, wantIndex)
 		}
-	}
-}
-
-func TestOpenAIClientSendsGeminiThinkingLevel(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatalf("Answer() decode request = %v", err)
-		}
-		extraBody, ok := request["extra_body"].(map[string]any)
-		if !ok {
-			t.Fatalf("Answer() extra_body = %#v, want object", request["extra_body"])
-		}
-		google := extraBody["google"].(map[string]any)
-		thinking := google["thinking_config"].(map[string]any)
-		if thinking["thinking_level"] != "minimal" {
-			t.Errorf("thinking level = %#v, want minimal", thinking["thinking_level"])
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "answer"}}}})
-	}))
-	t.Cleanup(server.Close)
-
-	client := NewOpenAIClient("key", server.URL+"/v1", "minimal", "chat", "embed", ChatOptions{})
-	if _, err := client.Answer(context.Background(), "question", nil, nil); err != nil {
-		t.Fatalf("Answer() error = %v", err)
 	}
 }
 
@@ -173,7 +147,7 @@ func TestAnswerSendsDecodingParams(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			client := NewOpenAIClient("key", server.URL+"/v1", "", "chat", "embed", tt.options)
+			client := NewOpenAIClient("key", server.URL+"/v1", "chat", "embed", tt.options)
 			if _, err := client.Answer(context.Background(), "question", nil, nil); err != nil {
 				t.Fatalf("Answer() error = %v", err)
 			}
@@ -224,7 +198,7 @@ func TestOpenAIClient_Answer_XOnBehalfOf(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			client := NewOpenAIClient("key", server.URL+"/v1", "", "chat", "embed", ChatOptions{ForwardUser: tt.forwardUser})
+			client := NewOpenAIClient("key", server.URL+"/v1", "chat", "embed", ChatOptions{ForwardUser: tt.forwardUser})
 			ctx := context.Background()
 			if tt.ctxUserID != "" {
 				ctx = withPrincipalID(ctx, tt.ctxUserID)
@@ -280,7 +254,7 @@ func TestOpenAIClient_Embed_XOnBehalfOf(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			client := NewOpenAIClient("key", server.URL+"/v1", "", "chat", "embed", ChatOptions{ForwardUser: tt.forwardUser})
+			client := NewOpenAIClient("key", server.URL+"/v1", "chat", "embed", ChatOptions{ForwardUser: tt.forwardUser})
 			ctx := context.Background()
 			if tt.ctxUserID != "" {
 				ctx = withPrincipalID(ctx, tt.ctxUserID)

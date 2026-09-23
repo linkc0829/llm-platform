@@ -26,23 +26,21 @@ type ChatOptions struct {
 
 // OpenAIClient implements LLM and Embedder.
 type OpenAIClient struct {
-	client              openai.Client
-	chatModel           openai.ChatModel
-	embedModel          openai.EmbeddingModel
-	baseURL             string
-	geminiThinkingLevel string
-	chat                ChatOptions
+	client     openai.Client
+	chatModel  openai.ChatModel
+	embedModel openai.EmbeddingModel
+	baseURL    string
+	chat       ChatOptions
 }
 
-func NewOpenAIClient(apiKey, baseURL, geminiThinkingLevel, chatModel, embedModel string, chat ChatOptions) *OpenAIClient {
+func NewOpenAIClient(apiKey, baseURL, chatModel, embedModel string, chat ChatOptions) *OpenAIClient {
 	opts := openAIOptions(apiKey, baseURL)
 	return &OpenAIClient{
-		client:              openai.NewClient(opts...),
-		chatModel:           openai.ChatModel(chatModel),
-		embedModel:          openai.EmbeddingModel(embedModel),
-		baseURL:             baseURL,
-		geminiThinkingLevel: geminiThinkingLevel,
-		chat:                chat,
+		client:     openai.NewClient(opts...),
+		chatModel:  openai.ChatModel(chatModel),
+		embedModel: openai.EmbeddingModel(embedModel),
+		baseURL:    baseURL,
+		chat:       chat,
 	}
 }
 
@@ -194,11 +192,6 @@ func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Sect
 	}
 	if o.chat.MaxTokens > 0 {
 		params.MaxTokens = openai.Int(o.chat.MaxTokens)
-	}
-	if o.geminiThinkingLevel != "" {
-		params.SetExtraFields(map[string]any{"extra_body": map[string]any{
-			"google": map[string]any{"thinking_config": map[string]string{"thinking_level": o.geminiThinkingLevel}},
-		}})
 	}
 	var requestOptions []option.RequestOption
 	if o.chat.ForwardUser {

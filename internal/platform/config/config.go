@@ -42,12 +42,11 @@ type LoggerConfig struct {
 }
 
 type OpenAIConfig struct {
-	APIKey              string `mapstructure:"api_key"`
-	LLMMode             string `mapstructure:"llm_mode"`
-	BaseURL             string `mapstructure:"base_url"`
-	GeminiThinkingLevel string `mapstructure:"gemini_thinking_level"`
-	ChatModel           string `mapstructure:"chat_model"`
-	EmbedModel          string `mapstructure:"embed_model"`
+	APIKey     string `mapstructure:"api_key"`
+	LLMMode    string `mapstructure:"llm_mode"`
+	BaseURL    string `mapstructure:"base_url"`
+	ChatModel  string `mapstructure:"chat_model"`
+	EmbedModel string `mapstructure:"embed_model"`
 	// Decoding parameters for every chat completion. Left unset, the upstream
 	// falls back to the served model's own generation_config — Gemma ships
 	// temperature 1.0, which made a 36-question eval disagree with itself
@@ -171,7 +170,6 @@ func newViper() *viper.Viper {
 		"openai.api_key":                  "OPENAI_API_KEY",
 		"openai.llm_mode":                 "KB_LLM_MODE",
 		"openai.base_url":                 "OPENAI_BASE_URL",
-		"openai.gemini_thinking_level":    "KB_GEMINI_THINKING_LEVEL",
 		"openai.chat_model":               "KB_CHAT_MODEL",
 		"openai.chat_temperature":         "KB_CHAT_TEMPERATURE",
 		"openai.chat_max_tokens":          "KB_CHAT_MAX_TOKENS",
