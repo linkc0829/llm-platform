@@ -152,9 +152,13 @@ func TestHandler_ConcurrencyLimit_ImmediateRejection(t *testing.T) {
 		defer close(done)
 		engine.ServeHTTP(rec1, req1)
 	}()
-	// The first request logs gateway_usage when it finishes; without this wait
-	// that line lands in whichever test's observer is installed next.
-	defer func() { <-done }()
+	// Release the first request and wait for it, also when an assertion below
+	// fails: it logs gateway_usage when it finishes, and without the wait that
+	// line lands in whichever test's observer is installed next.
+	defer func() {
+		close(holdUpstream)
+		<-done
+	}()
 
 	time.Sleep(20 * time.Millisecond)
 
@@ -188,9 +192,6 @@ func TestHandler_ConcurrencyLimit_ImmediateRejection(t *testing.T) {
 	if got := rejected[0].ContextMap()["error"]; got != "user_concurrency_limit" {
 		t.Errorf("rejection error = %v, want user_concurrency_limit", got)
 	}
-
-	// Release first request
-	close(holdUpstream)
 }
 
 func TestHandler_TrustedImpersonation(t *testing.T) {
