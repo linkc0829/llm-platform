@@ -65,7 +65,8 @@ def main() -> int:
 
     failures = [f"missing {m!r}" for m in MUST if m not in out]
     failures += [f"leaked {m!r}" for m in NEVER if m in out]
-    if re.search(r'\?"q\?"\s*:', out):
+    # A "q" key, raw or backslash-escaped inside loki.echo's quoted entry.
+    if re.search(r'\\?"q\\?"\s*:', out):
         failures.append('leaked a "q" field')
     if out.count("nonstandard_id") < 3:
         failures.append(f"nonstandard_id x{out.count('nonstandard_id')}, want >= 3 (2 user_id + 1 owner_id)")
