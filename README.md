@@ -36,6 +36,7 @@ Invoke-RestMethod -Method Post -Uri http://localhost:12598/chat `
 ## Endpoints
 
 - `GET /health` - public health check. It reports `vectors` (`ok`, `stale`, `not_indexed` or `disabled`), the chat model, its decoding parameters, and the grounding-prompt fingerprint. `stale` means the index is loaded but its vectors are missing or were built by another embedding model, so retrieval is BM25-only until `POST /index` runs again.
+- `GET /ready` - public readiness probe: `200` when vectors are `ok` or `disabled`, `503` when `not_indexed` or `stale`. `/health` stays `200` in every state. See [deploy/README.md](deploy/README.md).
 - `POST /index` - requires a bearer token with the `Indexer` capability; parses and audits all Markdown below `docs/`, rejects unknown or drifting section access metadata before saving or embedding, then loads the in-memory index. The request times out after `KB_INDEX_TIMEOUT` (default `60s`), and the server's write timeout is raised to match.
 - `POST /chat` - requires any valid bearer token and answers a question from indexed sections only, returning `answer`, `grounded`, `sources`, `images`, `strategy`, and `session_id`. `grounded` is `false` when retrieval fell below threshold or the model declined to answer despite context — branch on it instead of parsing the answer text. Transient upstream failures are reported as such: `429` when the model provider rate-limits (echoing its `Retry-After` if it sent one), `503` when the provider is unavailable or times out. Retry those; a `500` means the request itself failed and retrying will not help.
 - `/mcp` - Streamable HTTP MCP endpoint exposing the read-only `search_kb` tool; it requires a bearer token.
@@ -160,7 +161,8 @@ Drop `--cli` to open the browser UI instead: `npx @modelcontextprotocol/inspecto
 | --- | --- |
 | `POST /v1/chat/completions`, `POST /v1/completions`, `GET /v1/models` | `GATEWAY_UPSTREAM_BASE_URL` |
 | `POST /v1/embeddings` | `GATEWAY_EMBED_UPSTREAM_BASE_URL` if set, otherwise the chat upstream |
-| `GET /healthz` | answered by the gateway, no auth |
+| `GET /healthz` | answered by the gateway, no auth (liveness) |
+| `GET /readyz` | no auth; `200` only if the chat upstream answers `GET /v1/models` within 2 s (readiness) |
 
 Any other path or method returns 404 and is never forwarded.
 

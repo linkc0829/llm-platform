@@ -244,6 +244,37 @@ func TestHandlerHealthReportsVectorsState(t *testing.T) {
 	}
 }
 
+// /ready is what a restart check or B2's recovery timer polls, so it must say
+// no whenever answers would not match the eval: before the first index, and
+// while vectors are stale and retrieval has quietly fallen back to BM25.
+// /health stays 200 in every state; kbtoken and run_eval.py rely on that.
+func TestHandlerReadyFollowsVectorsState(t *testing.T) {
+	tests := []struct {
+		state      string
+		wantStatus int
+	}{
+		{state: "ok", wantStatus: http.StatusOK},
+		{state: "disabled", wantStatus: http.StatusOK},
+		{state: "not_indexed", wantStatus: http.StatusServiceUnavailable},
+		{state: "stale", wantStatus: http.StatusServiceUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.state, func(t *testing.T) {
+			r := gin.New()
+			RegisterRoutes(r.Group(""), &Handler{svc: &fakeHandlerService{vectorsState: tt.state}, principal: AnonymousPrincipal},
+				RouteGuards{AllowUnauthenticated: true})
+
+			for path, want := range map[string]int{"/ready": tt.wantStatus, "/health": http.StatusOK} {
+				w := httptest.NewRecorder()
+				r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+				if w.Code != want {
+					t.Errorf("GET %s status = %d, want %d (body %s)", path, w.Code, want, w.Body.String())
+				}
+			}
+		})
+	}
+}
+
 // TPS is decode speed: counting TTFT would fold queueing and prefill into it and
 // a backend with a long queue would look slow at generating. A refused query made
 // no model call, so it must carry no llm block rather than a row of zeros.

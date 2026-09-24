@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -32,6 +33,11 @@ type Handler struct {
 	logger     *zap.Logger
 	chatProxy  *httputil.ReverseProxy
 	embedProxy *httputil.ReverseProxy
+	// readyURL / readyKey / readyClient back /readyz: the chat upstream's
+	// model list, the cheapest call that proves it can serve.
+	readyURL    string
+	readyKey    string
+	readyClient *http.Client
 }
 
 // NewHandler constructs a gateway Handler with one reverse proxy per upstream.
@@ -66,6 +72,10 @@ func NewHandler(
 		resolver:   resolver,
 		logger:     logger,
 		chatProxy:  newProxy(transport, upstreamURL, upstreamKey, false),
+		readyURL:   singleJoiningSlash(upstreamURL.String(), "/v1/models"),
+		readyKey:   upstreamKey,
+		// ponytail: fixed 2s; a probe slower than that is a not-ready answer anyway.
+		readyClient: &http.Client{Transport: transport, Timeout: 2 * time.Second},
 	}
 	h.embedProxy = h.chatProxy
 	if embedUpstreamURL != nil {
@@ -186,9 +196,41 @@ func decodeBody(body []byte) (map[string]any, error) {
 	return payload, err
 }
 
-// Healthz serves an unauthenticated liveness and readiness probe.
+// Healthz serves an unauthenticated liveness probe: 200 while the process runs.
 func (h *Handler) Healthz(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// Readyz serves an unauthenticated readiness probe: 200 only when the chat
+// upstream answers. B2 times vLLM recovery against it. The reason stays in the
+// log; the probe is public and must not echo upstream detail.
+func (h *Handler) Readyz(c *gin.Context) {
+	if err := h.probeUpstream(c.Request.Context()); err != nil {
+		h.logger.Warn("gateway_not_ready", zap.Error(err))
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ready"})
+}
+
+func (h *Handler) probeUpstream(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.readyURL, nil)
+	if err != nil {
+		return fmt.Errorf("build probe: %w", err)
+	}
+	if h.readyKey != "" {
+		req.Header.Set("Authorization", "Bearer "+h.readyKey)
+	}
+	resp, err := h.readyClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("probe upstream: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("probe upstream: status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // countEmbeddingInput counts the texts in an embeddings "input" (a string or an

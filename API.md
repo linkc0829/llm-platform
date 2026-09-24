@@ -13,6 +13,7 @@
 | Method | Path | 認證 | 需要 capability | 用途 |
 | :--- | :--- | :--- | :--- | :--- |
 | `GET` | `/health` | **不需要** | — | 存活檢查 + 回報作答模型 |
+| `GET` | `/ready` | **不需要** | — | 就緒檢查:向量 `ok`/`disabled` 回 `200`,`not_indexed`/`stale` 回 `503` |
 | `POST` | `/chat` | Bearer | — | 問答 |
 | `POST` | `/index` | Bearer | **`indexer`** | 重建索引 |
 | `GET` | `/admin/tokens` | Bearer | **`admin`** | 列出所有 principal(不含 token) |
@@ -20,7 +21,7 @@
 | `DELETE` | `/admin/tokens/:id` | Bearer | **`admin`** | 撤銷 token |
 | `GET`/`POST`/`DELETE` | `/mcp` | Bearer | — | MCP Streamable HTTP(`search_kb` 工具) |
 
-`/health` 是唯一不需要 token 的端點 —— 它在 guard 之前註冊(`internal/kb/routes.go:21`),
+`/health` 與 `/ready` 是僅有的不需要 token 的端點 —— 它們在 guard 之前註冊(`internal/kb/routes.go`),
 所以拿它判斷「服務活著」是可靠的,拿它判斷「我的 token 有效」則毫無意義。
 
 回應同時帶出作答模型、解碼參數與 grounding prompt 的指紋,eval runner 靠它把

@@ -49,6 +49,18 @@ func (h *Handler) health(c *gin.Context) {
 	c.JSON(http.StatusOK, HealthResponse{Status: "ok", Vectors: vectors, Chat: h.chatConfig})
 }
 
+// ready is the readiness probe: 503 until the service can answer the way the
+// eval measured it. Stale vectors count as not ready — retrieval falls back to
+// BM25 and semantic questions fail, the same line run_eval.py draws.
+func (h *Handler) ready(c *gin.Context) {
+	vectors := h.svc.VectorsState()
+	if vectors == "ok" || vectors == "disabled" {
+		c.JSON(http.StatusOK, HealthResponse{Status: "ready", Vectors: vectors})
+		return
+	}
+	c.JSON(http.StatusServiceUnavailable, HealthResponse{Status: "not_ready", Vectors: vectors})
+}
+
 // ponytail: public local-tool endpoint; add rate limiting before exposing beyond localhost.
 func (h *Handler) index(c *gin.Context) {
 	timeout := h.indexTimeout

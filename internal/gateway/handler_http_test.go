@@ -1225,3 +1225,59 @@ func TestHandler_EmbeddingInputCounted(t *testing.T) {
 		})
 	}
 }
+
+// /readyz is what B2 polls to time vLLM recovery, so it must fail whenever the
+// chat upstream cannot serve — including when it hangs rather than refuses —
+// while /healthz keeps answering for the live process. The probe is public, so
+// it must not echo upstream text.
+func TestHandler_Readyz(t *testing.T) {
+	tests := []struct {
+		name       string
+		upstream   func(w http.ResponseWriter, r *http.Request, release <-chan struct{})
+		wantStatus int
+	}{
+		{name: "upstream_serving", wantStatus: http.StatusOK, upstream: func(w http.ResponseWriter, _ *http.Request, _ <-chan struct{}) {
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		}},
+		{name: "upstream_loading", wantStatus: http.StatusServiceUnavailable, upstream: func(w http.ResponseWriter, _ *http.Request, _ <-chan struct{}) {
+			http.Error(w, "model still loading at /secret/path", http.StatusServiceUnavailable)
+		}},
+		{name: "upstream_hangs", wantStatus: http.StatusServiceUnavailable, upstream: func(_ http.ResponseWriter, _ *http.Request, release <-chan struct{}) {
+			<-release
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			release := make(chan struct{})
+			seen := make(chan [2]string, 1)
+			engine, _ := setupTestGateway(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen <- [2]string{r.URL.Path, r.Header.Get("Authorization")}
+				tt.upstream(w, r, release)
+			}), &mockResolver{}, 10, 5)
+			t.Cleanup(func() { close(release) })
+
+			start := time.Now()
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+			if w.Code != tt.wantStatus {
+				t.Fatalf("GET /readyz = %d, want %d (body %s)", w.Code, tt.wantStatus, w.Body.String())
+			}
+			if elapsed := time.Since(start); elapsed > 3*time.Second {
+				t.Errorf("GET /readyz took %v, want within the 2s probe timeout", elapsed)
+			}
+			if got := <-seen; got != [2]string{"/v1/models", "Bearer upstream-secret-key"} {
+				t.Errorf("probe hit %q with auth %q, want /v1/models with the upstream key", got[0], got[1])
+			}
+			if strings.Contains(w.Body.String(), "secret") {
+				t.Errorf("GET /readyz body leaks upstream detail: %s", w.Body.String())
+			}
+
+			w = httptest.NewRecorder()
+			engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+			if w.Code != http.StatusOK {
+				t.Errorf("GET /healthz = %d, want 200 regardless of upstream", w.Code)
+			}
+		})
+	}
+}
