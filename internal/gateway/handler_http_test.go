@@ -147,9 +147,14 @@ func TestHandler_ConcurrencyLimit_ImmediateRejection(t *testing.T) {
 	req1.Header.Set("Authorization", "Bearer token-alice")
 	rec1 := newCloseNotifyingRecorder()
 
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		engine.ServeHTTP(rec1, req1)
 	}()
+	// The first request logs gateway_usage when it finishes; without this wait
+	// that line lands in whichever test's observer is installed next.
+	defer func() { <-done }()
 
 	time.Sleep(20 * time.Millisecond)
 
