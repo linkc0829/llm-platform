@@ -1,5 +1,5 @@
 """CI check for the Alloy allowlist: runs the pinned Alloy image from
-../../compose.yaml on testdata/input.log with the production allowlist module
+../../compose.yaml on testdata/input.jsonl with the production allowlist module
 and asserts on what loki.echo prints. Stdlib only; needs Docker.
 
     python deploy/observability/alloy/test/run.py

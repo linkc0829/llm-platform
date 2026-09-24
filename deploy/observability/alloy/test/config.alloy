@@ -4,7 +4,7 @@ import.file "lib" {
 }
 
 loki.source.file "fixture" {
-  targets    = [{__path__ = "/testdata/input.log", service = "fixture"}]
+  targets    = [{__path__ = "/testdata/input.jsonl", service = "fixture"}]
   forward_to = [lib.allowlist.main.receiver]
 }
 

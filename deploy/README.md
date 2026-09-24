@@ -59,7 +59,7 @@ The POC's old `/srv/ai/vllm` project must be stopped first (`docker compose down
   - A new field added to the code reaches Loki only after it is added to this list.
 - **The ID guard.** `user_id` and `owner_id` pass through only if they match `^p_[A-Za-z0-9_-]{21}[AQgw]$`, the exact shape `GeneratePrincipalID` produces. Anything else becomes `nonstandard_id`.
   - This catches misuse, such as a hand-edited `auth.json` ID or a free-form `X-On-Behalf-Of` value. It cannot prove an ID is random.
-- **CI** (`observability` job) runs the pinned Alloy image on [fixtures](observability/alloy/testdata/input.log), which include:
+- **CI** (`observability` job) runs the pinned Alloy image on [fixtures](observability/alloy/testdata/input.jsonl), which include:
   - question text with escapes and Chinese;
   - names used as IDs;
   - an unknown `msg`;
