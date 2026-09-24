@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -178,17 +179,20 @@ func GroundingFingerprint() string {
 	return hex.EncodeToString(sum[:6])
 }
 
-func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Section, history []Turn) (string, error) {
+func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Section, history []Turn) (Completion, error) {
 	messages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(groundingSystem)}
 	for _, turn := range history {
 		messages = append(messages, openai.UserMessage(turn.Query), openai.AssistantMessage(turn.Answer))
 	}
 	messages = append(messages, openai.UserMessage(groundedPrompt(query, sections)))
 
+	// Streamed only to time the first token: A5 compares backends on TTFT, which a
+	// non-streaming call cannot see. The caller still gets the whole reply at once.
 	params := openai.ChatCompletionNewParams{
-		Messages:    messages,
-		Model:       o.chatModel,
-		Temperature: openai.Float(o.chat.Temperature),
+		Messages:      messages,
+		Model:         o.chatModel,
+		Temperature:   openai.Float(o.chat.Temperature),
+		StreamOptions: openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)},
 	}
 	if o.chat.MaxTokens > 0 {
 		params.MaxTokens = openai.Int(o.chat.MaxTokens)
@@ -199,22 +203,51 @@ func (o *OpenAIClient) Answer(ctx context.Context, query string, sections []Sect
 			requestOptions = append(requestOptions, option.WithHeader("X-On-Behalf-Of", principalID))
 		}
 	}
-	completion, err := o.client.Chat.Completions.New(ctx, params, requestOptions...)
-	if err != nil {
-		return "", classifyLLMError(fmt.Errorf("openai chat: %w", err))
+	start := time.Now()
+	stream := o.client.Chat.Completions.NewStreaming(ctx, params, requestOptions...)
+	defer stream.Close()
+	var (
+		out     Completion
+		text    strings.Builder
+		choices bool
+	)
+	for stream.Next() {
+		chunk := stream.Current()
+		if out.Model == "" {
+			out.Model = chunk.Model
+		}
+		for _, choice := range chunk.Choices {
+			choices = true
+			if choice.Delta.Content != "" && out.TTFT == 0 {
+				out.TTFT = time.Since(start)
+			}
+			text.WriteString(choice.Delta.Content)
+		}
+		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+			out.PromptTokens, out.CompletionTokens = chunk.Usage.PromptTokens, chunk.Usage.CompletionTokens
+		}
 	}
-	// Token counts exist only on the response, and the LLM port returns a bare
-	// string — so they are logged here rather than plumbed up through it. Nothing
-	// joins them to a kb_query line; daily sums are what a cost comparison needs.
+	if err := stream.Err(); err != nil {
+		return Completion{}, classifyLLMError(fmt.Errorf("openai chat: %w", err))
+	}
+	out.Duration = time.Since(start)
+	if out.Model == "" {
+		out.Model = o.chatModel
+	}
+	// Returned for the per-question eval record and logged for daily sums; nothing
+	// joins this line to a kb_query line.
 	zap.L().Info("llm_usage",
 		zap.String("model", o.chatModel),
-		zap.Int64("prompt_tokens", completion.Usage.PromptTokens),
-		zap.Int64("completion_tokens", completion.Usage.CompletionTokens),
+		zap.Int64("prompt_tokens", out.PromptTokens),
+		zap.Int64("completion_tokens", out.CompletionTokens),
+		zap.Duration("ttft", out.TTFT),
+		zap.Duration("duration", out.Duration),
 	)
-	if len(completion.Choices) == 0 {
-		return "", fmt.Errorf("openai chat: no choices returned")
+	if !choices {
+		return Completion{}, fmt.Errorf("openai chat: no choices returned")
 	}
-	return strings.TrimSpace(completion.Choices[0].Message.Content), nil
+	out.Text = strings.TrimSpace(text.String())
+	return out, nil
 }
 
 func (o *OpenAIClient) Embed(ctx context.Context, texts []string) ([][]float32, error) {

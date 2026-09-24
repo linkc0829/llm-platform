@@ -3,7 +3,9 @@ package kb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -142,8 +144,7 @@ func TestAnswerSendsDecodingParams(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Errorf("Answer() decode request = %v, want nil", err)
 				}
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "answer"}}}})
+				writeSSEAnswer(w)
 			}))
 			t.Cleanup(server.Close)
 
@@ -193,8 +194,7 @@ func TestOpenAIClient_Answer_XOnBehalfOf(t *testing.T) {
 			var receivedHeader string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				receivedHeader = r.Header.Get("X-On-Behalf-Of")
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "answer"}}}})
+				writeSSEAnswer(w)
 			}))
 			t.Cleanup(server.Close)
 
@@ -266,5 +266,62 @@ func TestOpenAIClient_Embed_XOnBehalfOf(t *testing.T) {
 				t.Errorf("X-On-Behalf-Of = %q, want %q", receivedHeader, tt.wantHeader)
 			}
 		})
+	}
+}
+
+// writeSSEAnswer replies the way an OpenAI-compatible backend streams with
+// include_usage: content chunks, then a choices-less usage chunk.
+func writeSSEAnswer(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	_, _ = io.WriteString(w, `data: {"id":"c","model":"served-model","choices":[{"index":0,"delta":{"content":"ans"}}]}`+"\n\n")
+	_, _ = io.WriteString(w, `data: {"id":"c","model":"served-model","choices":[{"index":0,"delta":{"content":"wer"}}]}`+"\n\n")
+	_, _ = io.WriteString(w, `data: {"id":"c","model":"served-model","choices":[],"usage":{"prompt_tokens":120,"completion_tokens":2,"total_tokens":122}}`+"\n\n")
+	_, _ = io.WriteString(w, "data: [DONE]\n\n")
+}
+
+// A5 compares backends per question on the model that actually served it, its
+// token counts and its TTFT. The request must ask for usage, or a streamed reply
+// carries no token counts at all and the eval record reads zero.
+func TestAnswerReportsServedModelUsageAndTTFT(t *testing.T) {
+	var request map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request = %v", err)
+		}
+		writeSSEAnswer(w)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewOpenAIClient("key", server.URL+"/v1", "configured-model", "embed", ChatOptions{})
+	got, err := client.Answer(context.Background(), "question", nil, nil)
+	if err != nil {
+		t.Fatalf("Answer() error = %v", err)
+	}
+	if opts, _ := request["stream_options"].(map[string]any); request["stream"] != true || opts["include_usage"] != true {
+		t.Errorf("request stream=%v stream_options=%v, want stream with include_usage", request["stream"], request["stream_options"])
+	}
+	if got.Text != "answer" || got.Model != "served-model" || got.PromptTokens != 120 || got.CompletionTokens != 2 {
+		t.Errorf("Answer() = %+v, want text answer, served-model, 120/2 tokens", got)
+	}
+	if got.TTFT <= 0 || got.Duration < got.TTFT {
+		t.Errorf("TTFT %v, Duration %v: want 0 < TTFT <= Duration", got.TTFT, got.Duration)
+	}
+}
+
+// Streaming must not hide an upstream 429: the handler maps ErrLLMRateLimited to
+// a 429 with the upstream's Retry-After, which the eval harness waits on.
+func TestAnswerStreamingKeepsRateLimitClassification(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "0")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"message":"slow down"}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewOpenAIClient("key", server.URL+"/v1", "chat", "embed", ChatOptions{})
+	_, err := client.Answer(context.Background(), "question", nil, nil)
+	if !errors.Is(err, ErrLLMRateLimited) || RetryAfterOf(err) != "0" {
+		t.Fatalf("Answer() error = %v (retry-after %q), want ErrLLMRateLimited with the upstream hint", err, RetryAfterOf(err))
 	}
 }

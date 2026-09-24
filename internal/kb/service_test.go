@@ -46,15 +46,15 @@ type fakeLLM struct {
 	history  []Turn
 }
 
-func (f *fakeLLM) Answer(_ context.Context, query string, sections []Section, history []Turn) (string, error) {
+func (f *fakeLLM) Answer(_ context.Context, query string, sections []Section, history []Turn) (Completion, error) {
 	f.calls++
 	f.query = query
 	f.sections = append([]Section(nil), sections...)
 	f.history = append([]Turn(nil), history...)
 	if f.err != nil {
-		return "", f.err
+		return Completion{}, f.err
 	}
-	return f.answer, nil
+	return Completion{Text: f.answer}, nil
 }
 
 type fakeEmbedder struct {

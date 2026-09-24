@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/linkc0829/llm-platform/internal/shared"
@@ -824,6 +825,17 @@ func NewCitation(file, anchor string) Citation {
 }
 
 func (c Citation) String() string { return c.file + "#" + c.anchor }
+
+// Completion is one LLM reply and what producing it cost. Zero counts mean the
+// backend did not report them; a zero TTFT means no content token arrived.
+type Completion struct {
+	Text             string
+	Model            string
+	PromptTokens     int64
+	CompletionTokens int64
+	TTFT             time.Duration
+	Duration         time.Duration
+}
 
 type Answer struct {
 	text     string
