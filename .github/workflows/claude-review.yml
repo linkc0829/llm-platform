@@ -1,0 +1,53 @@
+name: Claude Review
+
+# Advisory only: comments on the PR, never fails, and is not a required check.
+# Runs once per PR (open / ready / reopen), not on every push, to keep usage down.
+# To review again after fixes, close and reopen the PR.
+on:
+  pull_request:
+    types: [opened, ready_for_review, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Drafts are not ready for review; forks get no secrets.
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Post as github-actions with this job's token instead of requiring the Claude GitHub App.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            The PR branch is checked out in the working directory. Read CLAUDE.md first:
+            its hexagonal-layout and dependency rules (R1–R3) are this repo's review standard.
+
+            Review only what this PR changes. Report, most severe first:
+            - bugs and behaviour regressions, with the concrete input that breaks
+            - security problems (auth bypass, secrets, leaking internals in responses or logs)
+            - violations of the CLAUDE.md rules
+            - tests that could not fail if the logic they cover broke
+            Skip formatting and naming nits; gofmt and golangci-lint already run in CI.
+            If you find nothing worth raising, say so in one line.
+
+            Write comments in Traditional Chinese (繁體中文).
+            Use `mcp__github_inline_comment__create_inline_comment` (with `confirmed: true`) for issues tied to a line,
+            and one `gh pr comment` for the summary. Only post GitHub comments.
+          claude_args: |
+            --max-turns 30
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
