@@ -1,0 +1,28 @@
+{
+  "prices_as_of": null,
+  "prices_source": null,
+  "models": [
+    {
+      "name": "<cloud model shown to match the on-prem model on the KB eval>",
+      "input_per_mtok": 0,
+      "output_per_mtok": 0,
+      "cache_read_per_mtok": 0
+    }
+  ],
+  "cache_hit_ratio": 0,
+  "token_ratio": 1.0,
+  "operating_cost": {
+    "hardware_usd": null,
+    "amortization_months": null,
+    "power_kw": null,
+    "power_hours_per_month": 730,
+    "power_price_per_kwh_usd": null,
+    "ops_hours_per_month": null,
+    "ops_rate_usd": null
+  },
+  "projection": {
+    "users": null,
+    "questions_per_user_per_day": null,
+    "workdays_per_month": 22
+  }
+}
