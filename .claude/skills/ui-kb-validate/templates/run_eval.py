@@ -52,7 +52,7 @@ RETRYABLE_HTTP_STATUS = {408, 429, 500, 502, 503, 504}
 # 一個寫錯或惡意的 header 不該讓整套驗收停擺,超過就跳過該題比睡一小時有用。
 RETRY_AFTER_CAP_SECONDS = float(os.getenv("KB_EVAL_RETRY_AFTER_CAP", "120"))
 # 續跑前必須存在的欄位。判分邏輯一改就在這裡加名字,舊 checkpoint 才會被拒絕。
-CHECKPOINT_ROW_KEYS = ("src_ok", "src_scored", "src_from_answer")
+CHECKPOINT_ROW_KEYS = ("src_ok", "src_scored", "src_from_answer", "total_latency_ms")
 # ================
 
 try:
@@ -122,8 +122,12 @@ def ask(q):
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             wait_for_request_slot()
+            # 從 slot 之後才計時:節流與重試的等待不是後端的延遲。
+            started = time.monotonic()
             with urllib.request.urlopen(req, timeout=300) as response:
-                return json.load(response)
+                r = json.load(response)
+            r["total_latency_ms"] = round((time.monotonic() - started) * 1000, 1)
+            return r
         except urllib.error.HTTPError as error:
             if error.code not in RETRYABLE_HTTP_STATUS or attempt == MAX_ATTEMPTS:
                 raise
@@ -151,6 +155,40 @@ def is_skippable_error(error):
     if isinstance(error, urllib.error.HTTPError):
         return error.code in RETRYABLE_HTTP_STATUS
     return isinstance(error, (urllib.error.URLError, TimeoutError, ConnectionError))
+
+
+def failure_reason_of(error):
+    """跳過的題目為什麼沒答案。429 與 timeout 分開記,否則換後端後失敗率變了
+    也看不出是容量不夠還是推論出錯。"""
+    if isinstance(error, urllib.error.HTTPError):
+        if error.code == 429:
+            return "rate_limited"
+        if error.code in (408, 504):
+            return "timeout"
+        return f"http_{error.code}"
+    if isinstance(error, TimeoutError) or "timed out" in str(error):
+        return "timeout"
+    return "connection_error"
+
+
+def llm_fields(r):
+    """每題的後端與延遲欄位(A5)。/chat 在檢索閘門婉拒時沒有呼叫模型、不帶 llm,
+    這些欄位就留 None,不要記成 0 —— 0 會把平均 TTFT 拉低。"""
+    llm = r.get("llm") or {}
+    return {"model": llm.get("model"), "workload_type": "rag",
+            "input_tokens": llm.get("input_tokens"),
+            "output_tokens": llm.get("output_tokens"),
+            "ttft_ms": llm.get("ttft_ms"), "tps": llm.get("tps"),
+            "llm_ms": llm.get("latency_ms"),
+            "total_latency_ms": r.get("total_latency_ms")}
+
+
+def percentile(values, p):
+    """nearest-rank;題數是幾百題,不需要內插。"""
+    values = sorted(v for v in values if v is not None)
+    if not values:
+        return None
+    return values[max(0, -(-len(values) * p // 100) - 1)]
 
 
 def health_url_from_kb_url(url):
@@ -225,6 +263,17 @@ def _selftest():
     assert health_url_from_kb_url("http://localhost:12598/chat/") == "http://localhost:12598/health"
     assert health_url_from_kb_url("http://localhost:12598") == "http://localhost:12598/health"
     assert health_url_from_kb_url("http://127.0.0.1:8080/api/chat") == "http://127.0.0.1:8080/api/health"
+
+    assert percentile([], 95) is None
+    assert percentile([None, 3, 1, 2], 50) == 2
+    assert percentile(list(range(1, 101)), 95) == 95
+    assert failure_reason_of(urllib.error.HTTPError("u", 429, "", {}, None)) == "rate_limited"
+    assert failure_reason_of(urllib.error.HTTPError("u", 504, "", {}, None)) == "timeout"
+    assert failure_reason_of(urllib.error.HTTPError("u", 502, "", {}, None)) == "http_502"
+    assert failure_reason_of(TimeoutError()) == "timeout"
+    # 檢索閘門婉拒時沒有 llm:欄位是 None,不是 0。
+    assert llm_fields({"total_latency_ms": 12.0})["ttft_ms"] is None
+    assert llm_fields({"llm": {"model": "m", "ttft_ms": 5}})["ttft_ms"] == 5
 
     print("run_eval selftest: PASS")
 
@@ -476,7 +525,9 @@ def evaluate_one(index):
                 "src_from_answer": False, "src_scored": False,
                 "strategy": None, "bm25_max": None, "best_cosine": None,
                 "sources": [], "answer": "", "skipped": True,
-                "skip_error": f"{type(error).__name__}: {error}"}
+                "skip_error": f"{type(error).__name__}: {error}",
+                **llm_fields({}), "success": False,
+                "failure_reason": failure_reason_of(error)}
     g, srcs = r.get("grounded"), r.get("sources", [])
     # must_not_infer 題目要的就是「不要引用任何東西」,而題庫仍給它們填了 src。
     # 拿它去算引用正確率,等於把每一題「正確的拒答」計成一次引用失敗:實測
@@ -510,7 +561,11 @@ def evaluate_one(index):
             # 的欄位。少了它,一輪全崩時分不清是模型差還是檢索退化成 BM25。
             "strategy": r.get("strategy"), "bm25_max": r.get("bm25_max"),
             "best_cosine": r.get("best_cosine"),
-            "sources": srcs, "answer": answer[:200], "skipped": False}
+            "sources": srcs, "answer": answer[:200], "skipped": False,
+            # success = 請求拿到答案;答得對不對看 ok。婉拒單獨標出來,
+            # 換後端時才分得出「拒答變多」和「請求失敗變多」。
+            **llm_fields(r), "success": True,
+            "failure_reason": "refused" if g is not True and not q.get("mni") else None}
 
 
 pending = [index for index, row in enumerate(rows) if row is None]
@@ -585,6 +640,27 @@ if scored:
           f" {len(skipped_rows)} 題 skipped)")
 else:
     print("  沒有可計分的題目 —— 題庫全是 must_not_infer?")
+
+print("\n===== 後端與延遲基線 =====")
+# 換後端(vLLM、FP8/BF16)時要和這一節比。只算真的呼叫了模型的題目;
+# ttft/tps 是 KB 呼叫 LLM 那一段,total 是 eval 看到的整個 /chat(含檢索與 embedding)。
+answered = [r for r in rows if not r.get("skipped")]
+called = [r for r in answered if r.get("model")]
+print(f"  model: {dict(collections.Counter(r['model'] for r in called))}")
+for field, unit in (("ttft_ms", "ms"), ("tps", "tok/s"), ("llm_ms", "ms"), ("total_latency_ms", "ms")):
+    source = called if field != "total_latency_ms" else answered
+    vals = [r.get(field) for r in source]
+    p50, p95 = percentile(vals, 50), percentile(vals, 95)
+    if p50 is None:
+        print(f"  {field:17} 無資料")
+        continue
+    print(f"  {field:17} P50={p50:9.1f}  P95={p95:9.1f} {unit}  (n={sum(v is not None for v in vals)})")
+if called:
+    print(f"  tokens/題          input={sum(r['input_tokens'] or 0 for r in called) / len(called):.0f}"
+          f"  output={sum(r['output_tokens'] or 0 for r in called) / len(called):.0f}")
+if answered and not called:
+    print("  ⚠ 沒有任何題目帶 llm 欄位 —— KB 執行檔早於 A5,重編後再跑。")
+print(f"  failure_reason: {dict(collections.Counter(r['failure_reason'] for r in rows if r.get('failure_reason')))}")
 
 print("\n===== 失敗歸因 =====")
 # 服務婉拒時會把 sources 清空(service.go:「A refusal carries no usable sources」),

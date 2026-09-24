@@ -237,7 +237,9 @@ curl -X POST http://192.168.17.180:12598/chat \
   "images": ["_assets/POS/.../S03-order_list.jpg"],
   "strategy": "hybrid",
   "bm25_max": 21.2,
-  "best_cosine": 0.81
+  "best_cosine": 0.81,
+  "llm": {"model": "<served model>", "input_tokens": 2330, "output_tokens": 159,
+          "ttft_ms": 420.5, "tps": 38.2, "latency_ms": 4580.1}
 }
 ```
 
@@ -247,6 +249,7 @@ curl -X POST http://192.168.17.180:12598/chat \
 | `sources` | 通過該 principal 權限過濾**之後**的引用 |
 | `strategy` | `hybrid`(BM25 + 向量 RRF 融合)/ `markdown`(只有 BM25)/ `vector` |
 | `bm25_max`、`best_cosine` | 檢索分數,診斷用 —— 婉拒時可分辨是「檢索沒東西」還是「有證據但模型不答」 |
+| `llm` | 這次回答的模型呼叫:實際回應的 `model`、token 數、`ttft_ms`、`tps`(首 token 之後的輸出速度)、`latency_ms`。檢索閘門直接婉拒、沒有呼叫模型時**省略**。eval 用來比較不同後端,一般呼叫端不需要 |
 
 多輪對話:回傳的 `session_id` 帶回下一次請求即可。**session 綁定 principal ID**,
 換一把 token 用同一個 `session_id` 會拿到 `403`。

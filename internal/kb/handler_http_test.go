@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -240,5 +241,21 @@ func TestHandlerHealthReportsVectorsState(t *testing.T) {
 				t.Errorf("vectors = %v, want %s", resp["vectors"], state)
 			}
 		})
+	}
+}
+
+// TPS is decode speed: counting TTFT would fold queueing and prefill into it and
+// a backend with a long queue would look slow at generating. A refused query made
+// no model call, so it must carry no llm block rather than a row of zeros.
+func TestToLLMStats(t *testing.T) {
+	if got := toLLMStats(nil); got != nil {
+		t.Errorf("toLLMStats(nil) = %+v, want nil", got)
+	}
+	got := toLLMStats(&Completion{Model: "m", PromptTokens: 100, CompletionTokens: 50, TTFT: 500 * time.Millisecond, Duration: 1500 * time.Millisecond})
+	if got.TTFTMs != 500 || got.LatencyMs != 1500 || got.TPS != 50 || got.InputTokens != 100 || got.OutputTokens != 50 {
+		t.Errorf("toLLMStats = %+v, want ttft 500ms, latency 1500ms, 50 tps", got)
+	}
+	if got := toLLMStats(&Completion{CompletionTokens: 50, Duration: time.Second}); got.TPS != 0 {
+		t.Errorf("no first token: TPS = %v, want 0", got.TPS)
 	}
 }

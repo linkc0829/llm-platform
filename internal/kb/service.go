@@ -77,6 +77,8 @@ type Service struct {
 type RetrievalMetrics struct {
 	BM25Max    float64
 	BestCosine float64
+	// LLM is nil when no model was called (retrieval gate refused the query).
+	LLM *Completion
 }
 
 func NewService(sections sectionStore, llm LLM, embedder Embedder, vectors VectorStore, sessions SessionStore, embedModel string) *Service {
@@ -239,8 +241,8 @@ func (s *Service) chat(ctx context.Context, principal shared.Principal, query, s
 		answer, sessionID, err := s.deny(ctx, ownerID, sessionID, query, start)
 		return answer, sessionID, RetrievalMetrics{BM25Max: poolRes.GateBM25, BestCosine: poolRes.GateCosine}, err
 	}
-	answer, sessionID, err := s.answerFrom(ctx, ownerID, sessionID, query, expanded, history, poolRes.Strategy, start)
-	return answer, sessionID, RetrievalMetrics{BM25Max: poolRes.GateBM25, BestCosine: poolRes.GateCosine}, err
+	answer, sessionID, completion, err := s.answerFrom(ctx, ownerID, sessionID, query, expanded, history, poolRes.Strategy, start)
+	return answer, sessionID, RetrievalMetrics{BM25Max: poolRes.GateBM25, BestCosine: poolRes.GateCosine, LLM: completion}, err
 }
 
 // deny records the turn and returns the cannot-confirm answer.
@@ -268,14 +270,15 @@ func principalIDFromContext(ctx context.Context) string {
 }
 
 // answerFrom grounds the LLM on the given sections, records the turn, and returns the answer.
-func (s *Service) answerFrom(ctx context.Context, ownerID, sessionID, query string, sections []Section, history []Turn, strategy string, start time.Time) (Answer, string, error) {
+func (s *Service) answerFrom(ctx context.Context, ownerID, sessionID, query string, sections []Section, history []Turn, strategy string, start time.Time) (Answer, string, *Completion, error) {
 	if ownerID != "" {
 		ctx = withPrincipalID(ctx, ownerID)
 	}
-	text, err := s.llm.Answer(ctx, query, sections, history)
+	completion, err := s.llm.Answer(ctx, query, sections, history)
 	if err != nil {
-		return Answer{}, sessionID, fmt.Errorf("llm answer: %w", err)
+		return Answer{}, sessionID, nil, fmt.Errorf("llm answer: %w", err)
 	}
+	text := completion.Text
 	// The model leads a refusal with ungroundedSentinel even when we retrieved
 	// context (unrelated match, or ui_inventory only for a steps question). Strip
 	// it and report grounded=false, so retrieval succeeding != answer grounded.
@@ -290,9 +293,9 @@ func (s *Service) answerFrom(ctx context.Context, ownerID, sessionID, query stri
 	}
 	answer := NewAnswer(text, sources, strategy, images, !ungrounded)
 	if err := s.record(ctx, ownerID, sessionID, query, answer, start); err != nil {
-		return Answer{}, sessionID, fmt.Errorf("record answer: %w", err)
+		return Answer{}, sessionID, nil, fmt.Errorf("record answer: %w", err)
 	}
-	return answer, sessionID, nil
+	return answer, sessionID, &completion, nil
 }
 
 func (s *Service) embedSections(ctx context.Context, secs []Section) (map[string][]float32, error) {

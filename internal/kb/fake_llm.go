@@ -10,9 +10,9 @@ type FakeLLM struct{}
 
 func NewFakeLLM() *FakeLLM { return &FakeLLM{} }
 
-func (f *FakeLLM) Answer(_ context.Context, query string, sections []Section, _ []Turn) (string, error) {
+func (f *FakeLLM) Answer(_ context.Context, query string, sections []Section, _ []Turn) (Completion, error) {
 	if len(sections) == 0 {
-		return "no context was retrieved for this question. " + ungroundedSentinel, nil
+		return Completion{Text: "no context was retrieved for this question. " + ungroundedSentinel, Model: "fake"}, nil
 	}
 	var b strings.Builder
 	b.WriteString("[fake LLM] Question: ")
@@ -21,7 +21,7 @@ func (f *FakeLLM) Answer(_ context.Context, query string, sections []Section, _ 
 	b.WriteString(sections[0].Citation())
 	b.WriteString(": ")
 	b.WriteString(strings.TrimSpace(sections[0].Body()))
-	return b.String(), nil
+	return Completion{Text: b.String(), Model: "fake"}, nil
 }
 
 func (f *FakeLLM) Embed(_ context.Context, texts []string) ([][]float32, error) {

@@ -4,7 +4,7 @@ import "context"
 
 // Outbound ports for the kb feature. Implementations live in repo_*/adapter_*/memory_*.
 type LLM interface {
-	Answer(ctx context.Context, query string, sections []Section, history []Turn) (string, error)
+	Answer(ctx context.Context, query string, sections []Section, history []Turn) (Completion, error)
 }
 
 type Embedder interface {

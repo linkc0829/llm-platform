@@ -37,6 +37,36 @@ type ChatResponse struct {
 	Strategy   string   `json:"strategy"`
 	BM25Max    float64  `json:"bm25_max"`
 	BestCosine float64  `json:"best_cosine"`
+	// LLM is omitted when the retrieval gate refused before any model call.
+	LLM *LLMStats `json:"llm,omitempty"`
+}
+
+// LLMStats lets the eval harness compare backends per question. TPS is output
+// tokens over the time after the first token, so it excludes queueing and prefill.
+type LLMStats struct {
+	Model        string  `json:"model"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	TTFTMs       float64 `json:"ttft_ms"`
+	TPS          float64 `json:"tps"`
+	LatencyMs    float64 `json:"latency_ms"`
+}
+
+func toLLMStats(c *Completion) *LLMStats {
+	if c == nil {
+		return nil
+	}
+	stats := &LLMStats{
+		Model:        c.Model,
+		InputTokens:  c.PromptTokens,
+		OutputTokens: c.CompletionTokens,
+		TTFTMs:       float64(c.TTFT.Microseconds()) / 1000,
+		LatencyMs:    float64(c.Duration.Microseconds()) / 1000,
+	}
+	if decode := c.Duration - c.TTFT; c.TTFT > 0 && decode > 0 {
+		stats.TPS = float64(c.CompletionTokens) / decode.Seconds()
+	}
+	return stats
 }
 
 func toChatResponse(a Answer, sessionID string, metrics RetrievalMetrics) ChatResponse {
@@ -48,5 +78,5 @@ func toChatResponse(a Answer, sessionID string, metrics RetrievalMetrics) ChatRe
 	if images == nil {
 		images = []string{}
 	}
-	return ChatResponse{SessionID: sessionID, Answer: a.Text(), Grounded: a.Grounded(), Sources: sources, Images: images, Strategy: a.Strategy(), BM25Max: metrics.BM25Max, BestCosine: metrics.BestCosine}
+	return ChatResponse{SessionID: sessionID, Answer: a.Text(), Grounded: a.Grounded(), Sources: sources, Images: images, Strategy: a.Strategy(), BM25Max: metrics.BM25Max, BestCosine: metrics.BestCosine, LLM: toLLMStats(metrics.LLM)}
 }

@@ -199,11 +199,11 @@ type reclaimingLLM struct {
 	claimErr  error
 }
 
-func (l *reclaimingLLM) Answer(ctx context.Context, _ string, _ []Section, _ []Turn) (string, error) {
+func (l *reclaimingLLM) Answer(ctx context.Context, _ string, _ []Section, _ []Turn) (Completion, error) {
 	l.calls++
 	*l.now = l.now.Add(l.store.idleTTL + time.Nanosecond)
 	_, l.claimErr = l.store.Claim(ctx, l.sessionID, l.ownerID)
-	return "answer", nil
+	return Completion{Text: "answer"}, nil
 }
 
 func TestServiceRejectsEmptyOwnerBeforeClaim(t *testing.T) {

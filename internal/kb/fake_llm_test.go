@@ -18,8 +18,8 @@ func TestFakeLLMAnswersFromFirstSection(t *testing.T) {
 		t.Fatalf("FakeLLM.Answer() error = %v, want nil", err)
 	}
 	for _, want := range []string{"[fake LLM]", "How long do refunds take?", "refund_policy.md#refund-timeline", "Refunds take 5-7 business days."} {
-		if !strings.Contains(answer, want) {
-			t.Errorf("FakeLLM.Answer() = %q, want substring %q", answer, want)
+		if !strings.Contains(answer.Text, want) {
+			t.Errorf("FakeLLM.Answer() = %q, want substring %q", answer.Text, want)
 		}
 	}
 }

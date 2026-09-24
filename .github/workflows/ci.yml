@@ -77,6 +77,7 @@ jobs:
           python-version: "3.x"
       - run: python .claude/skills/ui-kb-validate/templates/selfcheck_fixes.py
       - run: python .claude/skills/ui-kb-validate/templates/selfcheck_health.py
+      - run: python .claude/skills/ui-kb-validate/templates/run_eval.py --selftest
 
   govulncheck:
     runs-on: ubuntu-latest
