@@ -125,6 +125,13 @@ jobs:
               -e vault_file=vault.example.yml -e backup_file=x "$p"
           done
       - run: ansible-lint --offline
+      # The runner is disposable and has Docker: apply the real firewall role
+      # twice (idempotence) and let its DOCKER-USER check run.
+      - name: firewall role against the runner
+        run: |
+          for i in 1 2; do
+            sudo "$(command -v ansible-playbook)" -i localhost, -c local tests/firewall.yml
+          done
 
   govulncheck:
     runs-on: ubuntu-latest

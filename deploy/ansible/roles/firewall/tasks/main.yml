@@ -56,3 +56,25 @@
   ansible.builtin.command: ufw --force enable
   when: "'Status: active' not in firewall_status.stdout"
   changed_when: true
+
+- name: Apply the rules now
+  ansible.builtin.meta: flush_handlers
+
+# The block above is a second *filter section in after.rules (the pattern
+# ufw-docker documents). Check the live chain instead of trusting that
+# ufw loaded it: a missing DROP would leave the ports open to the whole LAN.
+- name: Read the live DOCKER-USER chain
+  ansible.builtin.command: iptables -S DOCKER-USER
+  register: firewall_docker_user
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Check every exposed port is restricted
+  ansible.builtin.assert:
+    that: "('--ctorigdstport ' ~ item ~ ' --ctdir ORIGINAL -j DROP') in firewall_docker_user.stdout"
+    fail_msg: >-
+      DOCKER-USER has no DROP rule for port {{ item }}: Docker-published ports
+      are open to every source. Check /etc/ufw/after.rules and `ufw reload`.
+    quiet: true
+  loop: "{{ exposed_ports }}"
+  when: not ansible_check_mode
