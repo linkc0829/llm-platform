@@ -206,6 +206,19 @@ func (s *Store) Resolve(ctx context.Context, token string) (shared.Principal, er
 	return shared.Principal{}, ErrInvalidToken
 }
 
+// Lookup returns the principal with the given ID, so callers can classify an
+// identity they did not authenticate themselves (X-On-Behalf-Of).
+func (s *Store) Lookup(id string) (shared.Principal, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, record := range s.principals {
+		if record.ID == id {
+			return clonePrincipal(record.Principal), true
+		}
+	}
+	return shared.Principal{}, false
+}
+
 func validTokenHash(hash string) bool {
 	if len(hash) != 64 {
 		return false

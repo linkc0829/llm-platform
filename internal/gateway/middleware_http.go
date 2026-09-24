@@ -57,6 +57,7 @@ func (h *Handler) authenticate(c *gin.Context) {
 func (h *Handler) logUsage(c *gin.Context) {
 	principal := c.MustGet(principalKey).(shared.Principal)
 	effectiveUser := c.GetString(effectiveUserKey)
+	userKind := h.userKind(principal, effectiveUser)
 
 	start := time.Now()
 	metrics := &requestMetrics{}
@@ -72,6 +73,7 @@ func (h *Handler) logUsage(c *gin.Context) {
 
 		fields := []zap.Field{
 			zap.String("user_id", effectiveUser),
+			zap.String("user_kind", userKind),
 			zap.String("principal_id", principal.ID),
 			zap.String("workload", defaultWorkload(principal.Workload)),
 			zap.String("path", c.Request.URL.Path),
@@ -94,6 +96,21 @@ func (h *Handler) logUsage(c *gin.Context) {
 	}()
 
 	c.Next()
+}
+
+// userKindUnknown marks an X-On-Behalf-Of ID that is not in auth.json.
+const userKindUnknown = "unknown"
+
+// userKind classifies the effective user without logging who they are, so
+// dashboards can count people apart from test and service traffic.
+func (h *Handler) userKind(principal shared.Principal, effectiveUser string) string {
+	if effectiveUser == principal.ID {
+		return principal.Kind()
+	}
+	if p, ok := h.resolver.Lookup(effectiveUser); ok {
+		return p.Kind()
+	}
+	return userKindUnknown
 }
 
 // admit enforces the per-user and global in-flight limits without queueing.
