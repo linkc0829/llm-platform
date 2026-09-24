@@ -126,6 +126,32 @@ func TestLoadFileResolvesExactTokenAndReturnsPrincipalCopy(t *testing.T) {
 	}
 }
 
+// Lookup lets the gateway classify an X-On-Behalf-Of ID it did not
+// authenticate; a miss must be distinguishable so it is logged as unknown.
+func TestStoreLookup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	want := shared.Principal{ID: "p_test", Name: "eval-bot", Teams: []string{"store"}}
+	if err := os.WriteFile(path, marshalDocument(t, Record{Principal: want, TokenSHA256: HashToken("kb_secret")}), 0o600); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", path, err)
+	}
+	store, err := LoadFile(path, zap.NewNop())
+	if err != nil {
+		t.Fatalf("LoadFile(%q) error = %v, want nil", path, err)
+	}
+
+	got, ok := store.Lookup("p_test")
+	if !ok || got.Name != "eval-bot" {
+		t.Fatalf("Lookup(p_test) = %+v, %v; want eval-bot, true", got, ok)
+	}
+	got.Teams[0] = "changed"
+	if again, _ := store.Lookup("p_test"); again.Teams[0] != "store" {
+		t.Errorf("Lookup returned mutable principal state %q", again.Teams[0])
+	}
+	if _, ok := store.Lookup("eval-bot"); ok {
+		t.Error("Lookup matched by name, want ID only")
+	}
+}
+
 func decodeTokenPayload(token string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(strings.TrimPrefix(token, TokenPrefix))
 }

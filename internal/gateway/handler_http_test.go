@@ -35,6 +35,15 @@ func (m *mockResolver) Resolve(_ context.Context, token string) (shared.Principa
 	return p, nil
 }
 
+func (m *mockResolver) Lookup(id string) (shared.Principal, bool) {
+	for _, p := range m.principals {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return shared.Principal{}, false
+}
+
 type closeNotifyingRecorder struct {
 	*httptest.ResponseRecorder
 	closed chan bool
@@ -1148,6 +1157,49 @@ func lastUsage(t *testing.T, engine *gin.Engine, req *http.Request) (*closeNotif
 		t.Fatalf("gateway_usage entries = %d, want 1", len(entries))
 	}
 	return rec, entries[0].ContextMap()
+}
+
+// user_kind is what the dashboard filters on to count people; it must follow
+// the effective user (X-On-Behalf-Of), not the KB's trusted token.
+func TestHandler_UsageLogsUserKind(t *testing.T) {
+	resolver := &mockResolver{principals: map[string]shared.Principal{
+		"alice-tok": {ID: "p_alice", Name: "alice"},
+		"kb-tok":    {ID: "p_kb", Name: "kb", Trusted: true},
+		"eval-tok":  {ID: "p_eval", Name: "eval-runner"},
+	}}
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[],"model":"m"}`))
+	})
+	engine, _ := setupTestGateway(t, upstream, resolver, 10, 5)
+
+	tests := []struct {
+		name, token, onBehalfOf, wantUser, wantKind string
+	}{
+		{"direct_call", "alice-tok", "", "p_alice", shared.KindUser},
+		{"service_own_call", "kb-tok", "", "p_kb", shared.KindService},
+		{"on_behalf_of_known_test_user", "kb-tok", "p_eval", "p_eval", shared.KindTest},
+		{"on_behalf_of_unknown_id", "kb-tok", "p_gone", "p_gone", userKindUnknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"m"}`))
+			req.Header.Set("Authorization", "Bearer "+tt.token)
+			if tt.onBehalfOf != "" {
+				req.Header.Set("X-On-Behalf-Of", tt.onBehalfOf)
+			}
+			_, usage := lastUsage(t, engine, req)
+			if usage["user_id"] != tt.wantUser || usage["user_kind"] != tt.wantKind {
+				t.Errorf("user_id/user_kind = %v/%v, want %s/%s", usage["user_id"], usage["user_kind"], tt.wantUser, tt.wantKind)
+			}
+			// Names stay out of the log: Grafana viewers can query it directly.
+			for k, v := range usage {
+				if s, _ := v.(string); s == "alice" || s == "kb" || s == "eval-runner" {
+					t.Errorf("field %s leaks principal name %q", k, s)
+				}
+			}
+		})
+	}
 }
 
 // A client that sends Accept-Encoding: gzip (every Go http.Client does) used to

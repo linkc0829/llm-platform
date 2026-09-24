@@ -1,0 +1,13 @@
+# Secrets and data are mounted at run time, never baked into the image.
+.env
+.env.*
+auth.json
+docs/
+eval/
+.kb/
+log/
+metrics/
+.git
+.github
+.claude
+deploy/

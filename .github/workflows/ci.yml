@@ -79,6 +79,20 @@ jobs:
       - run: python .claude/skills/ui-kb-validate/templates/selfcheck_health.py
       - run: python .claude/skills/ui-kb-validate/templates/run_eval.py --selftest
 
+  # The deploy image: proves the Dockerfile builds and the binaries it ships
+  # run on distroless (static, no libc).
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t llm-platform:ci .
+      # Nothing listens on :1, so the probe must run and report unhealthy (exit 1);
+      # any other code means the binary did not start.
+      - run: |
+          set +e
+          docker run --rm --entrypoint /app/healthcheck llm-platform:ci http://127.0.0.1:1/
+          test $? -eq 1
+
   govulncheck:
     runs-on: ubuntu-latest
     steps:

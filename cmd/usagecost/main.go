@@ -295,12 +295,6 @@ func principals(path string) map[string]shared.Principal {
 	return known
 }
 
-// notAUser marks eval and load-test principals and trusted service tokens
-// (the KB's own calls), whose traffic says nothing about how much people ask.
-func notAUser(p shared.Principal) bool {
-	return p.Trusted || strings.HasPrefix(p.Name, "eval-") || strings.HasPrefix(p.Name, "gwload-")
-}
-
 func isChat(path string) bool { return strings.HasSuffix(path, "/completions") }
 
 func build(lines []usageLine, questions []question, known map[string]shared.Principal, cfg *config) *report {
@@ -319,7 +313,7 @@ func build(lines []usageLine, questions []question, known map[string]shared.Prin
 			n = id
 		}
 		if users[n] == nil {
-			users[n] = &userRow{User: n, Test: notAUser(p)}
+			users[n] = &userRow{User: n, Test: p.Kind() != shared.KindUser}
 			days[n] = map[string]bool{}
 		}
 		return users[n]
