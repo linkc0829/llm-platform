@@ -19,6 +19,7 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler, guards RouteGuards) {
 	}
 	validateRouteGuards(guards)
 	rg.GET("/health", h.health)
+	rg.GET("/ready", h.ready)
 	rg.POST("/index", routeHandlers(guards, true, h.index)...)
 	rg.POST("/chat", routeHandlers(guards, false, h.chat)...)
 }

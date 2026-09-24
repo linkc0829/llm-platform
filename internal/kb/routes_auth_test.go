@@ -52,6 +52,7 @@ func TestRegisterRoutesGuardsProtectedEndpoints(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "health_is_public", method: http.MethodGet, path: "/health", wantStatus: http.StatusOK},
+		{name: "ready_is_public", method: http.MethodGet, path: "/ready", wantStatus: http.StatusOK},
 		{name: "chat_without_token", method: http.MethodPost, path: "/chat", body: `{"query":"hello"}`, wantStatus: http.StatusUnauthorized},
 		{name: "index_without_token", method: http.MethodPost, path: "/index", wantStatus: http.StatusUnauthorized},
 		{name: "chat_with_regular_token", method: http.MethodPost, path: "/chat", body: `{"query":"hello"}`, token: "regular", wantStatus: http.StatusOK},
