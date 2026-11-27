@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -104,6 +105,73 @@ func TestSectionEvidenceClass(t *testing.T) {
 				t.Errorf("Section.EvidenceClass(%q, %q) = %q, want %q", tt.file, tt.heading, got, tt.want)
 			}
 		})
+	}
+}
+
+// The overview is what retrieval ranks first for "如何執行X". Tagged general it
+// was refused outright; tagged stronger than its weakest step it would let the
+// model name controls a recorded_unlabeled step never resolved.
+func TestStampOverviewEvidenceTakesWeakestStep(t *testing.T) {
+	const overview = "點餐 — 完整步驟總覽"
+	step := func(evidence string) string { return "- 動作證據：`" + evidence + "`" }
+	tests := []struct {
+		name  string
+		steps []string
+		want  string
+	}{
+		{name: "all_recorded", steps: []string{step("recorded"), step("recorded")}, want: "procedure"},
+		{name: "all_visual", steps: []string{step("vision_inferred")}, want: "procedure_visual"},
+		{name: "recorded_and_visual", steps: []string{step("recorded"), step("vision_inferred")}, want: "procedure_visual"},
+		{name: "one_unlabeled_step_downgrades_all", steps: []string{step("recorded"), step("vision_inferred"), step("recorded_unlabeled")}, want: "procedure_unlabeled"},
+		{name: "not_attributable_is_weakest", steps: []string{step("recorded_unlabeled"), step("not_attributable")}, want: "procedure_inferred"},
+		{name: "no_step_markers_stays_general", steps: []string{"此畫面為靜態。"}, want: "general"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			meta := map[string]string{"doc_type": "procedure"}
+			sections := []Section{rehydrateSection("a-procedure.md", overview, "a", "1. 點擊「確認」", meta, nil)}
+			for i, body := range tt.steps {
+				sections = append(sections, rehydrateSection("a-procedure.md", "步驟", "s"+strconv.Itoa(i), body, meta, nil))
+			}
+			sections = append(sections,
+				rehydrateSection("a-procedure.md", "錄製前置條件", "pre", "前置。", meta, nil),
+				// Another module's steps must not leak into this overview.
+				rehydrateSection("b-procedure.md", "步驟", "b1", step("recorded"), meta, nil),
+				rehydrateSection("b-procedure.md", overview, "b", "1. 點擊「取消」", meta, nil),
+			)
+
+			StampOverviewEvidence(sections)
+
+			if got := sections[0].EvidenceClass(); got != tt.want {
+				t.Errorf("overview EvidenceClass() = %q, want %q", got, tt.want)
+			}
+			if got := sections[len(sections)-3].EvidenceClass(); got != "general" {
+				t.Errorf("non-overview section EvidenceClass() = %q, want general", got)
+			}
+			if got := sections[len(sections)-1].EvidenceClass(); got != "procedure" {
+				t.Errorf("other file's overview EvidenceClass() = %q, want procedure", got)
+			}
+		})
+	}
+}
+
+// Restamping must follow the steps, not the overview's previous stamp: once an
+// unnamed click is relabeled, the overview has to be allowed to answer again.
+func TestStampOverviewEvidenceRestampFollowsSteps(t *testing.T) {
+	meta := map[string]string{"doc_type": "procedure"}
+	sections := []Section{
+		rehydrateSection("a-procedure.md", "點餐 — 完整步驟總覽", "a", "1. 點擊「確認」", meta, nil),
+		rehydrateSection("a-procedure.md", "步驟", "s1", "- 動作證據：`recorded_unlabeled`", meta, nil),
+	}
+	StampOverviewEvidence(sections)
+	if got := sections[0].EvidenceClass(); got != "procedure_unlabeled" {
+		t.Fatalf("first stamp = %q, want procedure_unlabeled", got)
+	}
+
+	sections[1] = rehydrateSection("a-procedure.md", "步驟", "s1", "- 動作證據：`recorded`", meta, nil)
+	StampOverviewEvidence(sections)
+	if got := sections[0].EvidenceClass(); got != "procedure" {
+		t.Errorf("restamp after relabel = %q, want procedure", got)
 	}
 }
 
