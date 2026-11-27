@@ -2,14 +2,18 @@
 # Non-secret settings. Secrets live in vault.yml (see vault.example.yml).
 ai_root: /srv/ai
 
-# The POC's verified vLLM + checkpoint combination (Notion POC page, Phase 2).
-# Change them together.
-vllm_image: vllm/vllm-openai:v0.28.0
-model_id: RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic
-model_revision: ed35d7abe5d940da41b4ff06eb482feb0be8cb44
-served_model_name: gemma-4-26b-a4b
-# Measured on the POC (2026-09-29): 96k fits with 513k tokens of KV cache,
-# 5.2 concurrent full-length requests at gpu_memory_utilization 0.90.
+# Inkling-2-Mini on the vLLM nightly plus the sm_89 patch, verified on the AI
+# Station 2026-11-27 (KB eval, D+C at reasoning low). Change them together.
+# vllm_image is the local tag compose builds from vllm_base_image
+# (deploy/inference/inkling-sm89); bump the tag whenever the base changes.
+# Previous model: Gemma 4 on vllm/vllm-openai:v0.28.0 (see git history).
+vllm_base_image: vllm/vllm-openai@sha256:d24e5fc73f0b859bd76c9d2f6f6fa4da3001afd7637f2610876420f3027ea6c7
+vllm_image: local/vllm-inkling-sm89:pr69165-d24e5fc7
+model_id: thinkingmachines/Inkling-2-Mini
+model_revision: c9d028302cd0f035fdf8e7e91f089a4ce94d2195
+served_model_name: inkling-2-mini
+# Measured 2026-11-27: weights 18.24 GiB, KV (BF16 on Ada) 23.79 GiB =
+# 318,720 tokens, 3.24 concurrent full-length requests at utilization 0.90.
 vllm_max_model_len: 98304
 kb_embed_model: gemini-embedding-2
 # Requests the model runs at once (vLLM --max-num-seqs). The gateway's global
@@ -24,6 +28,11 @@ gateway_max_inflight_per_user: 2
 gateway_max_output_tokens: 16384
 # /chat timeout (retrieval + answer). Raise for a reasoning model.
 kb_chat_timeout: 30s
+# Inkling thinks by default (an unset effort renders as high). On the KB eval
+# low scored best (D 42/47, C 47/47, p50 3.9s, max 11s); high hit the 30s
+# timeout on 2 questions. Thinking tokens count against kb_chat_max_tokens.
+kb_chat_reasoning_effort: low
+kb_chat_max_tokens: 4096
 
 # Pinned source for the platform image (built on the machine).
 repo_url: https://github.com/linkc0829/llm-platform.git
