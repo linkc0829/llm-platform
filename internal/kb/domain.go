@@ -59,6 +59,9 @@ type Section struct {
 	meta    map[string]string
 	images  []string
 	tier    SectionTier
+	// overviewEvidence is the evidence class StampOverviewEvidence derived for a
+	// 完整步驟總覽 section; empty for every other section.
+	overviewEvidence string
 }
 
 // SectionTier is the retrieval visibility tier assigned during index audit.
@@ -620,6 +623,37 @@ func CanSee(principal shared.Principal, section Section) bool {
 // reported: AuditSections is the fail-loud gate and it runs first on every path
 // that indexes. This one runs later, at the point the snapshot is taken, so
 // there is no way to publish sections that were never stamped.
+// procedureEvidenceStrength orders step evidence from strongest to weakest.
+var procedureEvidenceStrength = map[string]int{
+	"procedure":           1,
+	"procedure_visual":    2,
+	"procedure_unlabeled": 3,
+	"procedure_inferred":  4,
+}
+
+const overviewHeadingSuffix = "完整步驟總覽"
+
+// StampOverviewEvidence gives each procedure's 完整步驟總覽 section the evidence
+// class of its weakest step. The exporter writes the overview from those steps
+// but without per-step markers, so on its own it classified as general, and the
+// prompt rule that general cannot support a sequence then refused every
+// "如何執行X" whose answer was the overview. Deriving the class here keeps that
+// rule intact: an overview is only as strong as the steps it lists.
+func StampOverviewEvidence(sections []Section) {
+	weakest := map[string]string{}
+	for _, section := range sections {
+		class := section.EvidenceClass()
+		if procedureEvidenceStrength[class] > procedureEvidenceStrength[weakest[section.file]] {
+			weakest[section.file] = class
+		}
+	}
+	for i := range sections {
+		if strings.HasSuffix(strings.TrimSpace(sections[i].heading), overviewHeadingSuffix) {
+			sections[i].overviewEvidence = weakest[sections[i].file]
+		}
+	}
+}
+
 func StampTiers(sections []Section) {
 	for i := range sections {
 		if tier, err := ClassifySection(sections[i]); err == nil {
@@ -675,6 +709,9 @@ func (s Section) Citation() string {
 
 // EvidenceClass reports what the section can prove for an answer.
 func (s Section) EvidenceClass() string {
+	if s.overviewEvidence != "" {
+		return s.overviewEvidence
+	}
 	evidence := s.heading + "\n" + s.body
 	switch strings.TrimSpace(s.meta["doc_type"]) {
 	case "engineering_reference":

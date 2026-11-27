@@ -397,6 +397,7 @@ func (s *Service) storeIndexSnapshot(indexed []Section, corpus Corpus, vecMap ma
 	cloned := make([]Section, len(indexed))
 	copy(cloned, indexed)
 	StampTiers(cloned)
+	StampOverviewEvidence(cloned)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.indexed = cloned
