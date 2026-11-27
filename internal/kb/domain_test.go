@@ -155,6 +155,26 @@ func TestStampOverviewEvidenceTakesWeakestStep(t *testing.T) {
 	}
 }
 
+// Restamping must follow the steps, not the overview's previous stamp: once an
+// unnamed click is relabeled, the overview has to be allowed to answer again.
+func TestStampOverviewEvidenceRestampFollowsSteps(t *testing.T) {
+	meta := map[string]string{"doc_type": "procedure"}
+	sections := []Section{
+		rehydrateSection("a-procedure.md", "點餐 — 完整步驟總覽", "a", "1. 點擊「確認」", meta, nil),
+		rehydrateSection("a-procedure.md", "步驟", "s1", "- 動作證據：`recorded_unlabeled`", meta, nil),
+	}
+	StampOverviewEvidence(sections)
+	if got := sections[0].EvidenceClass(); got != "procedure_unlabeled" {
+		t.Fatalf("first stamp = %q, want procedure_unlabeled", got)
+	}
+
+	sections[1] = rehydrateSection("a-procedure.md", "步驟", "s1", "- 動作證據：`recorded`", meta, nil)
+	StampOverviewEvidence(sections)
+	if got := sections[0].EvidenceClass(); got != "procedure" {
+		t.Errorf("restamp after relabel = %q, want procedure", got)
+	}
+}
+
 func TestBM25ScoreOrdersRelevantSectionFirst(t *testing.T) {
 	relevant, err := NewSection("refund_policy.md", "Refund Timeline", "Refunds are processed within 5-7 business days.", nil, nil)
 	if err != nil {

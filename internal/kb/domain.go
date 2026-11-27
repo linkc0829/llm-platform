@@ -616,13 +616,6 @@ func CanSee(principal shared.Principal, section Section) bool {
 		section.tier == SectionTierRestricted && principal.Engineering
 }
 
-// StampTiers records each section's visibility tier so queries can read it
-// instead of deriving it.
-//
-// Sections that fail classification are left at SectionTierInvalid rather than
-// reported: AuditSections is the fail-loud gate and it runs first on every path
-// that indexes. This one runs later, at the point the snapshot is taken, so
-// there is no way to publish sections that were never stamped.
 // procedureEvidenceStrength orders step evidence from strongest to weakest.
 var procedureEvidenceStrength = map[string]int{
 	"procedure":           1,
@@ -642,18 +635,34 @@ const overviewHeadingSuffix = "完整步驟總覽"
 func StampOverviewEvidence(sections []Section) {
 	weakest := map[string]string{}
 	for _, section := range sections {
+		// Overviews are skipped: their own stamp is derived, not evidence, and
+		// counting it would keep an old class after the steps change.
+		if isOverview(section) {
+			continue
+		}
 		class := section.EvidenceClass()
 		if procedureEvidenceStrength[class] > procedureEvidenceStrength[weakest[section.file]] {
 			weakest[section.file] = class
 		}
 	}
 	for i := range sections {
-		if strings.HasSuffix(strings.TrimSpace(sections[i].heading), overviewHeadingSuffix) {
+		if isOverview(sections[i]) {
 			sections[i].overviewEvidence = weakest[sections[i].file]
 		}
 	}
 }
 
+func isOverview(s Section) bool {
+	return strings.HasSuffix(strings.TrimSpace(s.heading), overviewHeadingSuffix)
+}
+
+// StampTiers records each section's visibility tier so queries can read it
+// instead of deriving it.
+//
+// Sections that fail classification are left at SectionTierInvalid rather than
+// reported: AuditSections is the fail-loud gate and it runs first on every path
+// that indexes. This one runs later, at the point the snapshot is taken, so
+// there is no way to publish sections that were never stamped.
 func StampTiers(sections []Section) {
 	for i := range sections {
 		if tier, err := ClassifySection(sections[i]); err == nil {
