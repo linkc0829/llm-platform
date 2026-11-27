@@ -71,7 +71,7 @@ services:
       OPENAI_BASE_URL: http://gateway:12599/v1
       # Trusted gateway token: kbtoken create -trusted -workload rag
       OPENAI_API_KEY: ${KB_GATEWAY_TOKEN:?trusted gateway token for the KB}
-      KB_CHAT_MODEL: ${SERVED_MODEL_NAME:-gemma-4-26b-a4b}
+      KB_CHAT_MODEL: ${SERVED_MODEL_NAME:-inkling-2-mini}
       KB_EMBED_MODEL: ${KB_EMBED_MODEL:-gemini-embedding-2}
       # Sends X-On-Behalf-Of so gateway_usage is per asking user, not all "kb".
       KB_LLM_FORWARD_USER: "true"

@@ -6,7 +6,13 @@ name: inference
 
 services:
   vllm:
-    image: ${VLLM_IMAGE:?pin an exact vllm/vllm-openai tag}
+    # Built on the host: the pinned nightly plus the sm_89 patch (see
+    # inkling-sm89/Dockerfile). `compose up --build` rebuilds it when either changes.
+    image: ${VLLM_IMAGE:?local tag for the patched image}
+    build:
+      context: inkling-sm89
+      args:
+        VLLM_BASE_IMAGE: ${VLLM_BASE_IMAGE:?pin the vllm/vllm-openai nightly by digest}
     runtime: nvidia
     ipc: host
     restart: unless-stopped
@@ -20,7 +26,7 @@ services:
       - --revision
       - ${MODEL_REVISION:?pinned commit SHA, never main}
       - --served-model-name
-      - ${SERVED_MODEL_NAME:-gemma-4-26b-a4b}
+      - ${SERVED_MODEL_NAME:-inkling-2-mini}
       - --dtype
       - auto
       - --max-model-len
@@ -32,9 +38,9 @@ services:
       - --enable-prefix-caching
       - --enable-auto-tool-choice
       - --tool-call-parser
-      - gemma4
+      - inkling
       - --reasoning-parser
-      - gemma4
+      - inkling
       - --api-key
       - ${VLLM_API_KEY:?shared with the gateway}
     # The gateway reaches vllm:8000 over ai-net. The loopback port is kept for
