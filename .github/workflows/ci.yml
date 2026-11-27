@@ -15,7 +15,7 @@ concurrency:
 
 env:
   # Latest patch of the go.mod minor, so govulncheck judges a patched stdlib.
-  GO_VERSION: "1.25.x"
+  GO_VERSION: "1.26.x"
 
 jobs:
   lint:

@@ -1,7 +1,7 @@
 # One image for the gateway and the KB; compose picks the binary per service.
 # Config comes from the environment (no .env is copied in). Relative paths
 # (log/, docs/, .kb/, auth.json) resolve under /app, where compose mounts them.
-FROM golang:1.25 AS build
+FROM golang:1.26 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
